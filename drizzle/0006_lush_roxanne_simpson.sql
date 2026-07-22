@@ -1,0 +1,1 @@
+ALTER TABLE `tasks` ADD `product_id` text;

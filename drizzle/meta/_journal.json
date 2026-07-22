@@ -1,0 +1,55 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1784466725046,
+      "tag": "0000_gray_reaper",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1784470894930,
+      "tag": "0001_dark_hulk",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1784607400630,
+      "tag": "0002_brave_frog_thor",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1784636283151,
+      "tag": "0003_equal_wendell_vaughn",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1784655156733,
+      "tag": "0004_loud_sage",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1784656249361,
+      "tag": "0005_ancient_glorian",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1784657520482,
+      "tag": "0006_lush_roxanne_simpson",
+      "breakpoints": true
+    }
+  ]
+}
