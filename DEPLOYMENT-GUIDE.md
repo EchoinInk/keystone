@@ -1,6 +1,6 @@
 # Founder OS — GitHub and deployment guide
 
-This export contains the complete Founder OS source at the latest published version.
+This checkout contains the Phase 1 founder-isolation changes. The live cutover has a separate ownership and verification procedure.
 
 ## Upload to GitHub
 
@@ -39,10 +39,6 @@ Founder OS currently uses Vinext, Cloudflare Workers and a Cloudflare D1 databas
 
 Uploading this repository to Vercel without changing the database/runtime layer may display build or runtime errors and will not provide working persistent data.
 
-The source is ready for GitHub and for its existing Sites/Cloudflare deployment. A Vercel version requires a separate migration from Cloudflare D1 to a Vercel-compatible database such as Neon Postgres, Supabase Postgres or Turso, plus replacement of the Vinext/Worker runtime integration.
+## Private founder deployment
 
-## Existing deployment
-
-The current production version remains available at:
-
-https://echo-in-ink-founder-os.echoinink.chatgpt.site
+The Phase 1 application accepts identity from the private Sites dispatcher at the documented Site origin. The checkout records a Sites project ID, a standalone Cloudflare Worker and a historical Site URL. Verify the actual Site project and its dedicated bindings before registering a founder. The old Worker retains its own deployment settings until it is retired or isolated. The ownership rehearsal, deployment prerequisites and acceptance checks are in the [Phase 1 report](docs/phase-1-workspace-isolation.md).

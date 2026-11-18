@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getRuntimeEnv } from "../../../db/runtime";
+import { accessResponse } from "../../chatgpt-auth";
 import { ensureDatabase } from "../../../db/bootstrap";
 
 const pageTables:Record<string,string[]>={
@@ -10,7 +11,7 @@ const pageTables:Record<string,string[]>={
   Finance:["invoices","payments","expenses","subscriptions","revenue_goals"],"Knowledge Base":["knowledge","notes","documents","clients","projects","meetings","invoices"],
 };
 
-async function contextFor(page:string){const env=getRuntimeEnv();const tables=pageTables[page]??pageTables["Mission Control"];const results=await env.DB.batch(tables.map(table=>env.DB.prepare(`SELECT * FROM ${table} ORDER BY updated_at DESC LIMIT 40`)));return Object.fromEntries(tables.map((table,index)=>[table,results[index].results??[]]));}
+async function contextFor(page:string){const env=getRuntimeEnv();const tables=Object.hasOwn(pageTables,page)?pageTables[page]:pageTables["Mission Control"];const results=await env.DB.batch(tables.map(table=>env.DB.prepare(`SELECT * FROM ${table} ORDER BY updated_at DESC LIMIT 40`)));return Object.fromEntries(tables.map((table,index)=>[table,results[index].results??[]]));}
 const cash=(value:number)=>new Intl.NumberFormat("en-NZ",{style:"currency",currency:"NZD",maximumFractionDigits:0}).format(value);
 
 function localAnalysis(page:string,prompt:string,context:Record<string,unknown>){
@@ -39,5 +40,43 @@ function localAnalysis(page:string,prompt:string,context:Record<string,unknown>)
   return `${open.length} open task${open.length===1?"":"s"} are in scope. Your best next action is ${open[0]?`“${open[0].title}”${open[0].due_date?` (due ${open[0].due_date})`:""}`:"to create one dated, high-value task"}.${nextMeeting?` Your next meeting is “${nextMeeting.title}”.`:""} This recommendation is based only on stored ${page} data.`;
 }
 
-export async function POST(request:NextRequest){try{await ensureDatabase();const env=getRuntimeEnv();const{page="Mission Control",prompt="What should I focus on today?"}=await request.json() as{page?:string;prompt?:string};const context=await contextFor(page);let response=localAnalysis(page,prompt,context);if(env.OPENAI_API_KEY){const result=await fetch("https://api.openai.com/v1/responses",{method:"POST",headers:{"content-type":"application/json",authorization:`Bearer ${env.OPENAI_API_KEY}`},body:JSON.stringify({model:env.OPENAI_MODEL??"gpt-5-mini",input:[{role:"system",content:`You are the Echo in Ink Founder OS intelligence layer. Answer only from supplied application data. Surface risks, opportunities and a specific next action. Never invent records. Page: ${page}. Data: ${JSON.stringify(context)}`},{role:"user",content:prompt}]})});if(result.ok){const json=await result.json() as{output_text?:string};if(json.output_text)response=json.output_text;}}
-  const timestamp=new Date().toISOString();await env.DB.prepare("INSERT INTO ai_conversations (id, page, prompt, response, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)").bind(crypto.randomUUID(),page,prompt,response,timestamp,timestamp).run();await env.DB.prepare("INSERT INTO activity_logs (id, category, action, entity, record_id, label, metadata, created_at, updated_at) VALUES (?, 'AI', 'create', 'aiConversations', ?, ?, '{}', ?, ?)").bind(crypto.randomUUID(),crypto.randomUUID(),`AI conversation started in ${page}`,timestamp,timestamp).run();return NextResponse.json({response});}catch(error){return NextResponse.json({error:error instanceof Error?error.message:"Assistant unavailable"},{status:500});}}
+export async function POST(request: NextRequest) {
+  try {
+    const env = getRuntimeEnv();
+    const { page = "Mission Control", prompt = "What should I focus on today?" } = await request.json();
+    if (typeof page !== "string" || typeof prompt !== "string") {
+      return NextResponse.json({ error: "Invalid assistant request" }, { status: 400 });
+    }
+    await ensureDatabase();
+    const context = await contextFor(page);
+    let response = localAnalysis(page, prompt, context);
+    if (env.OPENAI_API_KEY) {
+      const result = await fetch("https://api.openai.com/v1/responses", {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${env.OPENAI_API_KEY}` },
+        body: JSON.stringify({
+          model: env.OPENAI_MODEL ?? "gpt-5-mini",
+          input: [
+            { role: "system", content: `You are the Echo in Ink Founder OS intelligence layer. Answer only from supplied application data. Surface risks, opportunities and a specific next action. Never invent records. Page: ${page}. Data: ${JSON.stringify(context)}` },
+            { role: "user", content: prompt },
+          ],
+        }),
+      });
+      if (result.ok) {
+        const json = await result.json() as { output_text?: string };
+        if (json.output_text) response = json.output_text;
+      }
+    }
+    const timestamp = new Date().toISOString();
+    const conversationId = crypto.randomUUID();
+    await env.DB.batch([
+      env.DB.prepare("INSERT INTO ai_conversations (id, page, prompt, response, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)")
+        .bind(conversationId, page, prompt, response, timestamp, timestamp),
+      env.DB.prepare("INSERT INTO activity_logs (id, category, action, entity, record_id, label, metadata, created_at, updated_at) VALUES (?, 'AI', 'create', 'aiConversations', ?, ?, '{}', ?, ?)")
+        .bind(crypto.randomUUID(), conversationId, `AI conversation started in ${page}`, timestamp, timestamp),
+    ]);
+    return NextResponse.json({response});
+  } catch (error) {
+    return accessResponse(error);
+  }
+}

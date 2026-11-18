@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
+import { AccessError, accessResponse } from "../../chatgpt-auth";
 import { getRuntimeEnv } from "../../../db/runtime";
 import { ensureDatabase } from "../../../db/bootstrap";
+
+export const dynamic = "force-dynamic";
 
 type EntityConfig = { table: string; columns: string[]; category: string };
 
@@ -106,16 +109,72 @@ async function recordActivity(config:EntityConfig,entity:string,recordId:string|
 
 async function syncLaunchObjectiveStatuses(){const env=getRuntimeEnv(),objectives=await env.DB.prepare("SELECT id FROM launch_objectives").all<{id:string}>(),timestamp=now();for(const objective of objectives.results){const linked=await env.DB.prepare("SELECT status FROM tasks WHERE objective_id=? AND status!='Cancelled'").bind(objective.id).all<{status:string}>(),statuses=linked.results.map(item=>item.status),completed=statuses.filter(status=>status==="Completed").length,status=!statuses.length?"Not started":completed===statuses.length?"Completed":statuses.includes("Blocked")?"Blocked":statuses.some(value=>["In progress","In review","Completed"].includes(value))?"In progress":"Not started";await env.DB.prepare("UPDATE launch_objectives SET status=?, updated_at=? WHERE id=?").bind(status,timestamp,objective.id).run()}}
 
-export async function GET(){try{await ensureDatabase();const data=await loadAll();return NextResponse.json({data,metrics:calculate(data)});}catch(error){return NextResponse.json({error:error instanceof Error?error.message:"Unable to load Founder OS data"},{status:500});}}
+export async function GET() {
+  try {
+    await ensureDatabase();
+    const data = await loadAll();
+    return NextResponse.json({ workspaceId: getRuntimeEnv().workspaceId, data, metrics: calculate(data) });
+  } catch (error) {
+    return accessResponse(error);
+  }
+}
+
+const histories = new Set(["revisions", "activityLogs", "aiConversations"]);
+const actions = new Set(["create", "duplicate", "update", "delete", "bulkDelete"]);
+const ownershipInput = /^(?:workspace|owner|user|tenant|principal|subject)(?:_?id)?$/i;
+
+const relationModels: Record<string, string> = {
+  leadId: "leads", clientId: "clients", serviceId: "services", productId: "products",
+  projectId: "projects", invoiceId: "invoices", sprintId: "sprints", taskId: "tasks",
+  objectiveId: "launchObjectives", phaseId: "launchPhases", platformId: "acquisitionChannels",
+  channelId: "acquisitionChannels", repositoryId: "repositories", portfolioProjectId: "portfolioProjects",
+};
+
+async function verifyLinks(entity: string, fields: Record<string, unknown>, previous: Record<string, unknown> = {}) {
+  const { DB } = getRuntimeEnv();
+  for (const key of entities[entity].columns.filter(column => column.endsWith("Id"))) {
+    const changedType = key === "relatedId" && "relatedType" in fields && fields.relatedType !== previous.relatedType;
+    const value = key in fields ? fields[key] : changedType ? previous[key] : undefined;
+    if (value == null || value === "" || (value === previous[key] && !changedType)) continue;
+    let model = relationModels[key];
+    if (key === "relatedId") model = String(fields.relatedType ?? previous.relatedType);
+    if (entity === "resumeAchievements" && key === "projectId") model = "portfolioProjects";
+    if (!Object.hasOwn(entities, model) || typeof value !== "string") throw new AccessError(400, "Invalid record link");
+    const linked = await DB.prepare(`SELECT id FROM ${entities[model].table} WHERE id = ?`).bind(value).first();
+    if (!linked) throw new AccessError(404, "Linked record unavailable");
+  }
+}
+
+async function verifyDocumentFields(source: Record<string, unknown>) {
+  const { DB } = getRuntimeEnv();
+  const file = typeof source.objectKey === "string" && await DB.prepare(
+    "SELECT name, content_type, size FROM workspace_files WHERE object_key = ?",
+  ).bind(source.objectKey).first<{ name: string; content_type: string; size: number }>();
+  if (!file) throw new AccessError(404, "Document unavailable");
+  source.name ??= file.name;
+  source.contentType = file.content_type;
+  source.size = file.size;
+}
 
 export async function POST(request:NextRequest){
   try{
-    await ensureDatabase();const env=getRuntimeEnv();
+    const env = getRuntimeEnv();
     const body=await request.json() as{action?:string;entity?:string;id?:string;ids?:string[];data?:Record<string,unknown>};
-    const entity=body.entity??"",config=entities[entity];if(!config)return NextResponse.json({error:"Unknown data model"},{status:400});
+    const entity=body.entity??"";
+    if (!Object.hasOwn(entities, entity)) throw new AccessError(400, "Unknown data model");
+    if (histories.has(entity)) throw new AccessError(403, "History is read-only");
+    if ([...Object.keys(body), ...Object.keys(body.data ?? {})].some(key => ownershipInput.test(key))) {
+      throw new AccessError(403, "Ownership is managed by the server");
+    }
+    if (!actions.has(body.action ?? "create")) throw new AccessError(400, "Unknown action");
+    if (body.action === "duplicate" && !body.id) throw new AccessError(400, "Missing record id");
+    await ensureDatabase();
+    const config = entities[entity];
     let recordId=body.id,row:Record<string,unknown>|undefined;
     if(body.action==="delete"||body.action==="bulkDelete"){
       const ids=body.ids??(body.id?[body.id]:[]);if(!ids.length)return NextResponse.json({error:"No records selected"},{status:400});
+      const selected = await env.DB.prepare(`SELECT id FROM ${config.table} WHERE id IN (${ids.map(() => "?").join(",")})`).bind(...ids).all();
+      if (selected.results.length !== new Set(ids).size) throw new AccessError(404, "Record not found");
       const existing=await env.DB.prepare(`SELECT * FROM ${config.table} WHERE id = ?`).bind(ids[0]).first<Record<string,unknown>>();
       if(existing)await recordRevision(entity,ids[0],"delete",mapRow(existing));
       await env.DB.prepare(`DELETE FROM ${config.table} WHERE id IN (${ids.map(()=>"?").join(",")})`).bind(...ids).run();
@@ -124,22 +183,34 @@ export async function POST(request:NextRequest){
       if(!body.id)return NextResponse.json({error:"Missing record id"},{status:400});
       if(entity==="sprintObjectives"&&body.data?.sprintId==="")return NextResponse.json({error:"Choose a sprint for this daily objective"},{status:400});
       const existing=await env.DB.prepare(`SELECT * FROM ${config.table} WHERE id = ?`).bind(body.id).first<Record<string,unknown>>();
-      if(existing)await recordRevision(entity,body.id,"update",mapRow(existing));
+      if (!existing) throw new AccessError(404, "Record not found");
+      await verifyLinks(entity, body.data ?? {}, mapRow(existing));
+      if (entity === "documents" && body.data) {
+        if ("objectKey" in body.data && body.data.objectKey !== existing.object_key) {
+          await verifyDocumentFields(body.data);
+        } else {
+          delete body.data.contentType;
+          delete body.data.size;
+        }
+      }
       if(entity==="tasks"&&body.data?.status){const nextStatus=String(body.data.status),oldStatus=String(existing?.status??"To do");if(!["Backlog","To do","In progress","Blocked","In review","Completed","Cancelled"].includes(nextStatus))return NextResponse.json({error:"Unknown task status"},{status:400});if(nextStatus==="Completed"){body.data.previousStatus=oldStatus==="Completed"?String(existing?.previous_status??"To do"):oldStatus;body.data.completedAt=now()}else{body.data.completedAt=null;if(nextStatus!=="Cancelled")body.data.previousStatus=nextStatus}}
       const entries=Object.entries(body.data??{}).filter(([key])=>config.columns.includes(key));if(!entries.length)return NextResponse.json({error:"Nothing to update"},{status:400});
+      await recordRevision(entity,body.id,"update",mapRow(existing));
       await env.DB.prepare(`UPDATE ${config.table} SET ${entries.map(([key])=>`${snake(key)} = ?`).join(", ")}, updated_at = ? WHERE id = ?`).bind(...entries.map(([key,value])=>normaliseValue(key,value)),now(),body.id).run();
-      row={...(existing?mapRow(existing):{}),...(body.data??{})};recordId=body.id;
+      row={...mapRow(existing),...Object.fromEntries(entries)};recordId=body.id;
     }else{
       const source={...(body.data??{})};
       if(entity==="sprintObjectives"&&!source.sprintId)return NextResponse.json({error:"Choose a sprint for this daily objective"},{status:400});
       if(body.action==="duplicate"&&body.id){const existing=await env.DB.prepare(`SELECT * FROM ${config.table} WHERE id = ?`).bind(body.id).first<Record<string,unknown>>();if(!existing)return NextResponse.json({error:"Record not found"},{status:404});Object.assign(source,mapRow(existing),{name:existing.name?`${existing.name} copy`:undefined,title:existing.title?`${existing.title} copy`:undefined});if(entity==="tasks")Object.assign(source,{status:"To do",previousStatus:"To do",completedAt:null});}
+      await verifyLinks(entity, source);
+      if (entity === "documents") await verifyDocumentFields(source);
       const entries=Object.entries(source).filter(([key])=>config.columns.includes(key));recordId=id();const timestamp=now();
       const columns=["id",...entries.map(([key])=>snake(key)),"created_at","updated_at"];
       await env.DB.prepare(`INSERT INTO ${config.table} (${columns.join(",")}) VALUES (${columns.map(()=>"?").join(",")})`).bind(recordId,...entries.map(([key,value])=>normaliseValue(key,value)??null),timestamp,timestamp).run();
-      row={id:recordId,...source};await recordRevision(entity,recordId,"create",row);
+      row={...Object.fromEntries(entries),id:recordId};await recordRevision(entity,recordId,"create",row);
     }
     if(entity==="tasks")await syncLaunchObjectiveStatuses();
     await recordActivity(config,entity,recordId,body.action??"create",row);
     const data=await loadAll();return NextResponse.json({data,metrics:calculate(data)});
-  }catch(error){return NextResponse.json({error:error instanceof Error?error.message:"Unable to save record"},{status:500});}
+  }catch(error){return accessResponse(error);}
 }

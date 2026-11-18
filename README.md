@@ -17,11 +17,9 @@ Rather than operating as a collection of disconnected dashboards, Founder OS is 
 
 ---
 
-## Live Deployment
+## Founder access
 
-**Cloudflare Worker**
-
-https://echo-in-ink-founder-os.echoin.workers.dev
+Phase 1 selects the private Sites dispatcher for founder sign-in. The application admits one site-scoped subject to a dedicated D1 database and private R2 bucket. Direct Worker and preview URLs are denied by this revision. Production activation requires confirmation of the Sites project and founder, a paired backup and an approved owner registration. [Phase 1 evidence and cutover](docs/phase-1-workspace-isolation.md)
 
 Founder OS is deployed using Vinext and Cloudflare Workers.
 
@@ -311,7 +309,7 @@ Install dependencies:
 npm install
 ```
 
-Start the local development server:
+Start the local development server for frontend work. Protected operations require the private dispatcher. The authorization tests exercise them with disposable bindings.
 
 ```bash
 npm run dev
@@ -431,17 +429,9 @@ npx wrangler d1 list
 npx wrangler d1 info site-creator-d1
 ```
 
-### Apply a migration manually
+### Founder ownership migration
 
-```bash
-npx wrangler d1 execute site-creator-d1 \
-  --remote \
-  --file=drizzle/0000_gray_reaper.sql
-```
-
-Apply migrations in numerical order.
-
-> Always use `--remote` when applying schema changes to the production D1 database.
+Migration 0007 creates the workspace owner and attachment registry. A verified founder identity and an independently restored backup are required before registering the owner of existing data. The in-memory rehearsal accepts an offline SQLite backup. [Founder remediation procedure](docs/phase-1-workspace-isolation.md#legacy-data-and-cutover)
 
 ---
 
@@ -477,25 +467,7 @@ Validate the artifact:
 npm run validate:artifact
 ```
 
-Deploy to Cloudflare:
-
-```bash
-npx wrangler deploy
-```
-
-Wrangler automatically follows:
-
-```text
-.wrangler/deploy/config.json
-```
-
-to the generated Vinext configuration:
-
-```text
-dist/server/wrangler.json
-```
-
-After deployment, Wrangler prints the active Worker URL and version ID.
+Use the private Sites dispatch topology specified in the Phase 1 cutover. The existing standalone Worker and its preview routes require a separate retirement or isolation step. [Deployment and verification](docs/phase-1-workspace-isolation.md#legacy-data-and-cutover)
 
 ---
 
@@ -524,7 +496,8 @@ Do not treat generated output as the long-term source of configuration.
 | `npm run dev` | Start the local Vite development environment |
 | `npm run build` | Run the verified Vinext production build |
 | `npm run start` | Start the Vinext production server locally |
-| `npm run test` | Build and run rendered HTML tests |
+| `npm run test` | Build and run authorization, local workerd and rendered HTML tests |
+| `npm run test:authorization` | Run the authorization suites against the built Worker |
 | `npm run validate:artifact` | Validate the generated Worker artifact |
 | `npm run lint` | Run ESLint |
 | `npm run db:generate` | Generate Drizzle migrations |

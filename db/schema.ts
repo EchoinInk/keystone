@@ -1,4 +1,5 @@
-import { integer, real, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { sql } from "drizzle-orm";
+import { check, integer, real, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
 const audit = {
   createdAt: text("created_at").notNull(),
@@ -47,3 +48,20 @@ export const launchPhases=sqliteTable("launch_phases",{id:text("id").primaryKey(
 export const launchObjectives=sqliteTable("launch_objectives",{id:text("id").primaryKey(),phaseId:text("phase_id"),weekNumber:integer("week_number"),title:text("title").notNull(),description:text("description").notNull().default(""),priority:text("priority").notNull().default("High"),dueDate:text("due_date"),dependency:text("dependency").notNull().default(""),status:text("status").notNull().default("Todo"),taskId:text("task_id"),...audit});
 export const testimonials=sqliteTable("testimonials",{id:text("id").primaryKey(),projectId:text("project_id"),clientId:text("client_id"),quote:text("quote").notNull().default(""),author:text("author").notNull().default(""),status:text("status").notNull().default("Requested"),requestedAt:text("requested_at"),receivedAt:text("received_at"),permission:text("permission").notNull().default("Pending"),notes:text("notes").notNull().default(""),...audit});
 export const systemMeta=sqliteTable("system_meta",{key:text("key").primaryKey(),value:text("value").notNull(),updatedAt:text("updated_at").notNull()});
+
+// One reviewed founder owns the entire dedicated D1 binding.
+export const workspaceOwner = sqliteTable("workspace_owner", {
+  slot: integer("slot").primaryKey(),
+  siteOrigin: text("site_origin").notNull(),
+  subject: text("subject").notNull(),
+}, table => [check("single_workspace_owner", sql`${table.slot} = 1`)]);
+
+// Provenance for uploads and explicitly reviewed legacy objects. The live
+// document row separately controls whether any bytes may be downloaded.
+export const workspaceFiles = sqliteTable("workspace_files", {
+  objectKey: text("object_key").primaryKey(),
+  etag: text("etag").notNull(),
+  name: text("name").notNull(),
+  contentType: text("content_type").notNull(),
+  size: integer("size").notNull(),
+});

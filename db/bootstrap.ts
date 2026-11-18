@@ -1,20 +1,24 @@
 import migrationSql from "../drizzle/0000_gray_reaper.sql?raw";
 import { getRuntimeEnv } from "./runtime";
 
-let ready: Promise<void> | null = null;
+const ready = new WeakMap<ReturnType<typeof getRuntimeEnv>["DB"], Promise<void>>();
 const INTERNAL_CLIENT_ID = "echo-in-ink-internal";
 const INTERNAL_PROJECT_ID = "echo-in-ink-studio-operations";
 
 export function ensureDatabase() {
-  if (!ready) ready = initialise().catch(error => {
-    ready = null;
-    throw error;
-  });
-  return ready;
+  const { DB } = getRuntimeEnv();
+  let pending = ready.get(DB);
+  if (!pending) {
+    pending = initialise(DB).catch(error => {
+      ready.delete(DB);
+      throw error;
+    });
+    ready.set(DB, pending);
+  }
+  return pending;
 }
 
-async function initialise() {
-  const { DB } = getRuntimeEnv();
+async function initialise(DB: ReturnType<typeof getRuntimeEnv>["DB"]) {
   const exists = await DB.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'leads'").first();
   if (!exists) {
     const statements = migrationSql.split("--> statement-breakpoint").map(value => value.trim()).filter(Boolean);
@@ -53,6 +57,12 @@ async function initialise() {
   await ensureColumns("tasks", {product_id:"text",sprint_id:"text",objective_id:"text",assignee:"text NOT NULL DEFAULT ''",notes:"text NOT NULL DEFAULT ''",previous_status:"text NOT NULL DEFAULT 'To do'",completed_at:"text"});
   await DB.prepare("UPDATE tasks SET status=CASE status WHEN 'Todo' THEN 'To do' WHEN 'Done' THEN 'Completed' ELSE status END, previous_status=CASE WHEN previous_status IN ('', 'Todo', 'Done') THEN 'To do' ELSE previous_status END, completed_at=CASE WHEN status IN ('Done','Completed') THEN COALESCE(completed_at,updated_at) ELSE NULL END").run();
   await DB.prepare("UPDATE sprint_objectives SET status=CASE status WHEN 'Todo' THEN 'To do' WHEN 'Done' THEN 'Completed' ELSE status END").run();
+  // Continue founder-specific seeds only for an explicitly opted-in database
+  // or one that already installed the founder template before Phase 1.
+  const templates = await DB.prepare(
+    "SELECT 1 FROM system_meta WHERE (key = 'founder-templates' AND value = 'enabled') OR (key = 'freelance-launch-v1' AND value = 'complete') LIMIT 1",
+  ).first();
+  if (!templates) return;
   const internalTimestamp = new Date().toISOString();
   await DB.prepare("INSERT OR IGNORE INTO clients (id, lead_id, name, company, email, phone, status, tags, notes, created_at, updated_at) VALUES (?, NULL, ?, ?, '', '', 'Active', ?, ?, ?, ?)")
     .bind(INTERNAL_CLIENT_ID, "Echo in Ink — Internal", "Echo in Ink", "internal, studio", "Internal workspace for Echo in Ink products, operations and founder work.", internalTimestamp, internalTimestamp).run();

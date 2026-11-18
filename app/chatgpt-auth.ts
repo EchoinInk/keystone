@@ -1,86 +1,31 @@
-import { headers } from "next/headers";
-import { redirect } from "next/navigation";
+// Sites dispatch owns sign-in, session expiry and the site-scoped subject header.
+// Only the private dispatch deployment at this exact origin may use this issuer.
+export const siteOrigin = "https://echo-in-ink-founder-os.echoinink.chatgpt.site";
 
-export type ChatGPTUser = {
-  displayName: string;
-  email: string;
-  fullName: string | null;
-};
-
-const USER_EMAIL_HEADER = "oai-authenticated-user-email";
-const USER_FULL_NAME_HEADER = "oai-authenticated-user-full-name";
-const USER_FULL_NAME_ENCODING_HEADER =
-  "oai-authenticated-user-full-name-encoding";
-const PERCENT_ENCODED_UTF8 = "percent-encoded-utf-8";
-const SIGN_IN_PATH = "/signin-with-chatgpt";
-const SIGN_OUT_PATH = "/signout-with-chatgpt";
-const CALLBACK_PATH = "/callback";
-
-export async function getChatGPTUser(): Promise<ChatGPTUser | null> {
-  const requestHeaders = await headers();
-  const email = requestHeaders.get(USER_EMAIL_HEADER);
-  if (!email) return null;
-
-  const encodedFullName = requestHeaders.get(USER_FULL_NAME_HEADER);
-  const fullName =
-    encodedFullName &&
-    requestHeaders.get(USER_FULL_NAME_ENCODING_HEADER) === PERCENT_ENCODED_UTF8
-      ? safeDecodeURIComponent(encodedFullName)
-      : null;
-
-  return {
-    displayName: fullName ?? email,
-    email,
-    fullName,
-  };
-}
-
-export async function requireChatGPTUser(
-  returnTo: string,
-): Promise<ChatGPTUser> {
-  const user = await getChatGPTUser();
-  if (user) return user;
-
-  redirect(chatGPTSignInPath(returnTo));
-}
-
-export function chatGPTSignInPath(returnTo: string): string {
-  const safeReturnTo = safeRelativeReturnPath(returnTo);
-  return `${SIGN_IN_PATH}?return_to=${encodeURIComponent(safeReturnTo)}`;
-}
-
-export function chatGPTSignOutPath(returnTo = "/"): string {
-  const safeReturnTo = safeRelativeReturnPath(returnTo);
-  return `${SIGN_OUT_PATH}?return_to=${encodeURIComponent(safeReturnTo)}`;
-}
-
-function safeRelativeReturnPath(value: string): string {
-  if (!value.startsWith("/") || value.startsWith("//")) return "/";
-
-  let url: URL;
-  try {
-    url = new URL(value, "https://app.local");
-  } catch {
-    return "/";
+export class AccessError extends Error {
+  constructor(readonly status: number, message: string) {
+    super(message);
   }
-  if (url.origin !== "https://app.local") return "/";
-  if (isReservedAuthPath(url.pathname)) return "/";
-
-  return `${url.pathname}${url.search}${url.hash}`;
 }
 
-function isReservedAuthPath(pathname: string): boolean {
-  return (
-    pathname === SIGN_IN_PATH ||
-    pathname === SIGN_OUT_PATH ||
-    pathname === CALLBACK_PATH
-  );
-}
-
-function safeDecodeURIComponent(value: string): string | null {
-  try {
-    return decodeURIComponent(value);
-  } catch {
-    return null;
+export function founderSubject(request: Request, admittedSubject?: string): string {
+  if (new URL(request.url).origin !== siteOrigin) {
+    throw new AccessError(403, "Use the private Founder OS site");
   }
+  const subject = request.headers.get("oai-authenticated-user-id");
+  if (!subject) throw new AccessError(401, "Sign in with ChatGPT");
+  if (!admittedSubject) throw new AccessError(503, "Founder admission is pending");
+  if (subject !== admittedSubject) throw new AccessError(403, "Workspace access denied");
+  if (!["GET", "HEAD"].includes(request.method) && request.headers.get("origin") !== siteOrigin) {
+    throw new AccessError(403, "Same-origin request required");
+  }
+  return subject;
+}
+
+export function accessResponse(error: unknown): Response {
+  const known = error instanceof AccessError;
+  return Response.json({ error: known ? error.message : "Workspace unavailable" }, {
+    status: known ? error.status : 503,
+    headers: { "cache-control": "private, no-store" },
+  });
 }

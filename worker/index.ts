@@ -2,12 +2,10 @@
 import { handleImageOptimization, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES } from "vinext/server/image-optimization";
 import handler from "vinext/server/app-router-entry";
 
-interface Env {
-  ASSETS: Fetcher;
-  DB: D1Database;
-  BUCKET: R2Bucket;
-  OPENAI_API_KEY?: string;
-  OPENAI_MODEL?: string;
+import { withFounderWorkspace, type FounderRuntimeEnv } from "../db/runtime";
+
+interface Env extends FounderRuntimeEnv {
+  ASSETS: { fetch(request: Request): Promise<Response> };
   IMAGES: {
     input(stream: ReadableStream): {
       transform(options: Record<string, unknown>): {
@@ -30,21 +28,26 @@ interface ExecutionContext {
 
 const worker = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-    globalThis.__FOUNDER_OS_ENV__ = env;
-    const url = new URL(request.url);
+    return withFounderWorkspace(request, env, async () => {
+      const url = new URL(request.url);
 
-    if (url.pathname === "/_vinext/image") {
-      const allowedWidths = [...DEFAULT_DEVICE_SIZES, ...DEFAULT_IMAGE_SIZES];
-      return handleImageOptimization(request, {
-        fetchAsset: (path) => env.ASSETS.fetch(new Request(new URL(path, request.url))),
-        transformImage: async (body, { width, format, quality }) => {
-          const result = await env.IMAGES.input(body).transform(width > 0 ? { width } : {}).output({ format, quality });
-          return result.response();
-        },
-      }, allowedWidths);
-    }
+      if (url.pathname === "/_vinext/image") {
+        const allowedWidths = [...DEFAULT_DEVICE_SIZES, ...DEFAULT_IMAGE_SIZES];
+        return handleImageOptimization(request, {
+          fetchAsset: (path) => env.ASSETS.fetch(new Request(new URL(path, request.url))),
+          transformImage: async (body, { width, format, quality }) => {
+            const result = await env.IMAGES.input(body).transform(width > 0 ? { width } : {}).output({ format, quality });
+            return result.response();
+          },
+        }, allowedWidths);
+      }
 
-    return handler.fetch(request, env, ctx);
+      if ((request.method === "GET" || request.method === "HEAD") && /\.(?:js|css|woff2|svg|png|ico)$/.test(url.pathname)) {
+        return env.ASSETS.fetch(request);
+      }
+
+      return handler.fetch(request, env, ctx);
+    });
   },
 };
 
