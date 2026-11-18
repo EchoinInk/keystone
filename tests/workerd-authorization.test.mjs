@@ -3,14 +3,15 @@ import { readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import { Miniflare } from "miniflare";
+import { migrate } from "../scripts/migrations.mjs";
+import { Miniflare, convertV4MiniflareOptions } from "miniflare";
 
 test("local workerd enforces admission and document ownership with D1 and R2 bindings", async t => {
   const root = fileURLToPath(new URL("../dist/server/", import.meta.url));
   const modules = readdirSync(root, { recursive: true }).filter(name => name.endsWith(".js"));
   const origin = "https://echo-in-ink-founder-os.echoinink.chatgpt.site";
   const compatibility = { compatibilityDate: "2026-05-15", compatibilityFlags: ["nodejs_compat"] };
-  const mf = new Miniflare({
+  const mf = new Miniflare(convertV4MiniflareOptions({
     host: "127.0.0.1", cf: false,
     workers: [
       {
@@ -34,7 +35,7 @@ test("local workerd enforces admission and document ownership with D1 and R2 bin
         outboundService: () => new Response(null, { status: 403 }),
       },
     ],
-  });
+  }));
   t.after(() => mf.dispose());
   const request = (path, options) => mf.dispatchFetch(new URL(path, origin).href, options);
   const founderHeaders = { origin, cookie: "fixture=founder" };
@@ -46,11 +47,7 @@ test("local workerd enforces admission and document ownership with D1 and R2 bin
   })).status, 401);
   assert.equal(await db.prepare("SELECT name FROM sqlite_schema WHERE name='tasks'").first(), null);
 
-  const directory = new URL("../drizzle/", import.meta.url);
-  for (const name of readdirSync(directory).filter(name => name.endsWith(".sql")).sort()) {
-    const sql = readFileSync(new URL(name, directory), "utf8").split("--> statement-breakpoint");
-    await db.batch(sql.map(statement => db.prepare(statement.trim())));
-  }
+  await migrate(db);
   assert.equal((await request("/api/data", { headers: founderHeaders })).status, 403);
   await db.prepare("INSERT INTO workspace_owner VALUES (1, ?, ?)").bind(origin, "fixture-founder").run();
   const form = new FormData();

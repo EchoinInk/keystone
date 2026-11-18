@@ -1,0 +1,24 @@
+name: Engineering stability
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+      - run: npm install --global npm@10.9.9
+      - run: npm run install:ci
+      - run: npm ls --all > /dev/null
+      - run: npm audit --audit-level=high
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: ./node_modules/.bin/drizzle-kit check
+      - run: npm test
+      - run: python3 scripts/check-reproducible-build.py

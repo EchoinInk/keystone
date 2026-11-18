@@ -1,6 +1,6 @@
 # Founder OS — GitHub and deployment guide
 
-This checkout contains the Phase 1 founder-isolation changes. The live cutover has a separate ownership and verification procedure.
+This checkout includes founder isolation and the Phase 2 engineering baseline. The live cutover has a separate ownership and verification procedure.
 
 ## Upload to GitHub
 
@@ -20,10 +20,12 @@ git push -u origin main
 
 ## Run locally
 
-Founder OS requires Node.js 22.13 or newer.
+Use the Node and npm versions pinned in .nvmrc and package.json.
 
 ```bash
-npm install
+npm run install:ci
+npm run db:migrate -- --local
+npm run db:normalize -- --local
 npm run dev
 ```
 
@@ -32,6 +34,8 @@ npm run dev
 ```bash
 npm run build
 ```
+
+Apply the database initialization procedure on the restored staging copy before cutover. The Phase 2 record covers release inputs, migration adoption and explicit seed access. [Engineering stability and operations](docs/phase-2-engineering-stability.md)
 
 ## Important Vercel note
 

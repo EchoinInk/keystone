@@ -2,18 +2,7 @@ import { Buffer } from "node:buffer";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { AccessError, accessResponse, founderSubject, siteOrigin } from "../app/chatgpt-auth";
 
-type Row = Record<string, unknown>;
-interface Statement {
-  bind(...values: unknown[]): Statement;
-  first<T = Row>(): Promise<T | null>;
-  all<T = Row>(): Promise<{ results: T[] }>;
-  run(): Promise<unknown>;
-}
-
-export interface WorkspaceDatabase {
-  prepare(sql: string): Statement;
-  batch(statements: Statement[]): Promise<{ results: Row[] }[]>;
-}
+import type { D1Database } from "@cloudflare/workers-types";
 
 interface WorkspaceBucket {
   put(key: string, body: Blob, options: { httpMetadata: { contentType: string } }): Promise<{ etag: string } | null>;
@@ -21,7 +10,7 @@ interface WorkspaceBucket {
 }
 
 export interface FounderRuntimeEnv {
-  DB: WorkspaceDatabase;
+  DB: D1Database;
   BUCKET: WorkspaceBucket;
   FOUNDER_USER_ID?: string;
   OPENAI_API_KEY?: string;

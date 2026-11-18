@@ -240,19 +240,20 @@ app/
 └── page.tsx
 
 db/
-├── bootstrap.ts
 ├── index.ts
 ├── runtime.ts
 └── schema.ts
 
 drizzle/
-├── migrations
-└── metadata
+├── 0000_*.sql through 0007_*.sql
+└── meta/
 
 worker/
 └── index.ts
 
 scripts/
+├── database.mjs
+├── migrations.mjs
 ├── build-verified.sh
 ├── install-ci.sh
 ├── sites-env.sh
@@ -263,32 +264,10 @@ scripts/
 
 ## Requirements
 
-- Node.js 22.13.0 or newer
-- npm
-- Cloudflare account
-- Wrangler authentication
-- Cloudflare D1 database
-- Cloudflare R2 bucket
-- GNU `timeout` for the verified build script on macOS
-
-Check the active Node version:
+Use Node.js 22.23.4, npm 10.9.9, Python 3.8+ and Bash on macOS or Linux for the verified toolchain. The local tests use disposable D1 and R2 bindings. Remote administration requires Cloudflare credentials.
 
 ```bash
-node -v
-```
-
-The project expects Node 22.
-
-If using `nvm`:
-
-```bash
-nvm install 22
-nvm use 22
-```
-
-The repository includes an `.nvmrc` file when configured correctly, allowing:
-
-```bash
+nvm install
 nvm use
 ```
 
@@ -306,38 +285,13 @@ cd founder-os
 Install dependencies:
 
 ```bash
-npm install
+npm run install:ci
 ```
 
 Start the local development server for frontend work. Protected operations require the private dispatcher. The authorization tests exercise them with disposable bindings.
 
 ```bash
 npm run dev
-```
-
----
-
-## macOS Build Requirement
-
-The verified build script uses GNU `timeout`.
-
-Install GNU Coreutils:
-
-```bash
-brew install coreutils
-```
-
-Add the GNU command aliases to your shell path:
-
-```bash
-echo 'export PATH="$(brew --prefix coreutils)/libexec/gnubin:$PATH"' >> ~/.zshrc
-source ~/.zshrc
-```
-
-Confirm `timeout` is available:
-
-```bash
-timeout --version
 ```
 
 ---
@@ -409,7 +363,14 @@ Do not commit secrets or private Cloudflare credentials to the repository.
 
 ## Database
 
-Founder OS uses Cloudflare D1 with Drizzle ORM.
+Founder OS uses Cloudflare D1 with Drizzle ORM. Initialize the local binding before serving the application.
+
+```bash
+npm run db:migrate -- --local
+npm run db:normalize -- --local
+```
+
+The operator command adopts compatible legacy schema and applies pending SQL in journal order. Founder templates are an explicit local operation for an empty database. Release inputs, remote cutover and recovery are documented in the [Phase 2 operating record](docs/phase-2-engineering-stability.md).
 
 ### Generate migrations
 
@@ -495,11 +456,15 @@ Do not treat generated output as the long-term source of configuration.
 |---|---|
 | `npm run dev` | Start the local Vite development environment |
 | `npm run build` | Run the verified Vinext production build |
-| `npm run start` | Start the Vinext production server locally |
-| `npm run test` | Build and run authorization, local workerd and rendered HTML tests |
+| `npm run start` | Serve the built Worker locally with Wrangler |
+| `npm run test` | Build and run authorization, database lifecycle, local workerd and rendered HTML tests |
 | `npm run test:authorization` | Run the authorization suites against the built Worker |
 | `npm run validate:artifact` | Validate the generated Worker artifact |
-| `npm run lint` | Run ESLint |
+| `npm run typecheck` | Run strict TypeScript from scratch |
+| `npm run lint` | Run ESLint with zero warnings |
+| `npm run db:migrate -- --local` | Apply pending migrations to local D1 |
+| `npm run db:normalize -- --local` | Apply the one-time legacy status backfill |
+| `npm run db:seed -- --local --founder-template` | Install the optional template on empty local D1 |
 | `npm run db:generate` | Generate Drizzle migrations |
 | `npm run install:ci` | Run the repository CI installation script |
 
@@ -528,28 +493,12 @@ This repository should maintain:
 
 The project is running on Node 20 or older.
 
-Switch to Node 22:
+Use the pinned runtime and reinstall the lockfile.
 
 ```bash
-nvm use 22
+nvm use
+npm run install:ci
 ```
-
-Then reinstall:
-
-```bash
-rm -rf node_modules
-npm install
-```
-
-### `build-verified.sh requires GNU timeout`
-
-Install Coreutils:
-
-```bash
-brew install coreutils
-```
-
-Then add the GNU commands to the shell path.
 
 ### Vercel cannot find `.next`
 

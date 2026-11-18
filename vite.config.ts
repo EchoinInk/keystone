@@ -13,6 +13,7 @@ const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === "seatbelt";
 
 const localBindingConfig = {
   main: "./worker/index.ts",
+  compatibility_date: "2026-05-15",
   workers_dev: false,
   preview_urls: false,
   assets: { binding: "ASSETS", run_worker_first: true },
@@ -21,6 +22,7 @@ const localBindingConfig = {
     ? [
         {
           binding: d1,
+          migrations_dir: "./drizzle",
           database_name: "site-creator-d1",
           database_id: SITE_CREATOR_PLACEHOLDER_DATABASE_ID,
         },

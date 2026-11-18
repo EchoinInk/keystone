@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { AccessError, accessResponse } from "../../chatgpt-auth";
 import { getRuntimeEnv } from "../../../db/runtime";
-import { ensureDatabase } from "../../../db/bootstrap";
 
 export const dynamic = "force-dynamic";
 
@@ -111,7 +110,6 @@ async function syncLaunchObjectiveStatuses(){const env=getRuntimeEnv(),objective
 
 export async function GET() {
   try {
-    await ensureDatabase();
     const data = await loadAll();
     return NextResponse.json({ workspaceId: getRuntimeEnv().workspaceId, data, metrics: calculate(data) });
   } catch (error) {
@@ -168,7 +166,6 @@ export async function POST(request:NextRequest){
     }
     if (!actions.has(body.action ?? "create")) throw new AccessError(400, "Unknown action");
     if (body.action === "duplicate" && !body.id) throw new AccessError(400, "Missing record id");
-    await ensureDatabase();
     const config = entities[entity];
     let recordId=body.id,row:Record<string,unknown>|undefined;
     if(body.action==="delete"||body.action==="bulkDelete"){
@@ -193,6 +190,10 @@ export async function POST(request:NextRequest){
           delete body.data.size;
         }
       }
+      if (entity === "sprintObjectives" && body.data) {
+        if (body.data.status === "Todo") body.data.status = "To do";
+        if (body.data.status === "Done") body.data.status = "Completed";
+      }
       if(entity==="tasks"&&body.data?.status){const nextStatus=String(body.data.status),oldStatus=String(existing?.status??"To do");if(!["Backlog","To do","In progress","Blocked","In review","Completed","Cancelled"].includes(nextStatus))return NextResponse.json({error:"Unknown task status"},{status:400});if(nextStatus==="Completed"){body.data.previousStatus=oldStatus==="Completed"?String(existing?.previous_status??"To do"):oldStatus;body.data.completedAt=now()}else{body.data.completedAt=null;if(nextStatus!=="Cancelled")body.data.previousStatus=nextStatus}}
       const entries=Object.entries(body.data??{}).filter(([key])=>config.columns.includes(key));if(!entries.length)return NextResponse.json({error:"Nothing to update"},{status:400});
       await recordRevision(entity,body.id,"update",mapRow(existing));
@@ -202,6 +203,11 @@ export async function POST(request:NextRequest){
       const source={...(body.data??{})};
       if(entity==="sprintObjectives"&&!source.sprintId)return NextResponse.json({error:"Choose a sprint for this daily objective"},{status:400});
       if(body.action==="duplicate"&&body.id){const existing=await env.DB.prepare(`SELECT * FROM ${config.table} WHERE id = ?`).bind(body.id).first<Record<string,unknown>>();if(!existing)return NextResponse.json({error:"Record not found"},{status:404});Object.assign(source,mapRow(existing),{name:existing.name?`${existing.name} copy`:undefined,title:existing.title?`${existing.title} copy`:undefined});if(entity==="tasks")Object.assign(source,{status:"To do",previousStatus:"To do",completedAt:null});}
+      if (entity === "tasks" || entity === "sprintObjectives") {
+        if (source.status == null || source.status === "Todo") source.status = "To do";
+        if (source.status === "Done") source.status = "Completed";
+        if (entity === "tasks" && source.status === "Completed") source.completedAt ??= now();
+      }
       await verifyLinks(entity, source);
       if (entity === "documents") await verifyDocumentFields(source);
       const entries=Object.entries(source).filter(([key])=>config.columns.includes(key));recordId=id();const timestamp=now();

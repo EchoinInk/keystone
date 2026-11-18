@@ -3,43 +3,50 @@
   "version": "0.1.0",
   "private": true,
   "engines": {
-    "node": ">=22.13.0"
+    "node": ">=22.23.4"
   },
   "scripts": {
     "install:ci": "bash scripts/install-ci.sh",
     "dev": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vite",
     "build": "bash scripts/build-verified.sh",
-    "start": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext start",
+    "start": "WRANGLER_LOG_PATH=.wrangler/logs wrangler dev --local --config dist/server/wrangler.json --ip 127.0.0.1 --persist-to .wrangler/state",
     "test": "npm run build && node --test tests/*.test.mjs",
     "test:authorization": "node --test tests/authorization.test.mjs tests/workerd-authorization.test.mjs",
     "validate:artifact": "bash scripts/validate-artifact.sh",
-    "lint": "bash scripts/sites-env.sh -- eslint . --ignore-pattern dist --ignore-pattern .next",
-    "db:generate": "bash scripts/sites-env.sh -- drizzle-kit generate"
+    "lint": "eslint . --max-warnings=0",
+    "db:generate": "bash scripts/sites-env.sh -- drizzle-kit generate",
+    "typecheck": "tsc --noEmit --incremental false",
+    "db:migrate": "WRANGLER_LOG_PATH=.wrangler/logs node scripts/database.mjs migrate",
+    "db:seed": "WRANGLER_LOG_PATH=.wrangler/logs node scripts/database.mjs seed",
+    "db:normalize": "WRANGLER_LOG_PATH=.wrangler/logs node scripts/database.mjs normalize"
   },
   "dependencies": {
     "drizzle-orm": "0.45.2",
-    "next": "16.2.6",
-    "react": "19.2.6",
-    "react-dom": "19.2.6"
+    "next": "16.4.6",
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
   },
   "devDependencies": {
-    "@cloudflare/vite-plugin": "1.37.1",
+    "@cloudflare/vite-plugin": "1.70.0",
+    "@cloudflare/workers-types": "5.20261118.1",
     "@tailwindcss/postcss": "4.2.1",
     "@types/node": "22.19.19",
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",
     "@vitejs/plugin-react": "6.0.2",
-    "@vitejs/plugin-rsc": "0.5.26",
-    "drizzle-kit": "0.31.10",
+    "@vitejs/plugin-rsc": "0.5.39",
+    "drizzle-kit": "0.31.11",
     "eslint": "9.39.4",
-    "eslint-config-next": "16.2.6",
-    "react-server-dom-webpack": "19.2.6",
+    "eslint-config-next": "16.4.6",
+    "miniflare": "5.20261116.0-beta",
+    "react-server-dom-webpack": "19.3.1",
     "tailwindcss": "4.2.1",
     "typescript": "5.9.3",
-    "vinext": "0.0.50",
-    "vite": "8.0.13",
-    "wrangler": "4.92.0"
+    "vinext": "1.4.6",
+    "vite": "8.3.8",
+    "wrangler": "4.163.0"
   },
   "type": "module",
-  "displayName": "Echo in Ink Founder Operations Centre"
+  "displayName": "Echo in Ink Founder Operations Centre",
+  "packageManager": "npm@10.9.9"
 }

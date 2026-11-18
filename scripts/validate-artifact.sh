@@ -19,19 +19,12 @@ hosting="${SITES_PROJECT_ROOT}/dist/.openai/hosting.json"
   exit 66
 }
 
-node --input-type=module - "${worker}" "${hosting}" <<'NODE'
-import { readFile } from "node:fs/promises";
-import { pathToFileURL } from "node:url";
-
-const [workerPath, hostingPath] = process.argv.slice(2);
-JSON.parse(await readFile(hostingPath, "utf8"));
-
-const workerUrl = pathToFileURL(workerPath);
-workerUrl.searchParams.set("sites-validation", `${process.pid}-${Date.now()}`);
-const worker = await import(workerUrl.href);
-if (!worker.default || typeof worker.default.fetch !== "function") {
-  throw new Error("dist/server/index.js must have an ESM default export with fetch(request, env, ctx)");
-}
+diff -r "${SITES_PROJECT_ROOT}/drizzle" "${SITES_PROJECT_ROOT}/dist/.openai/drizzle"
+cmp "${SITES_PROJECT_ROOT}/.openai/hosting.json" "${hosting}"
+node --input-type=module <<'NODE'
+import { loadWorkerInNode } from "./scripts/load-worker-in-node.mjs";
+const worker = await loadWorkerInNode();
+if (typeof worker?.fetch !== "function") throw new Error("Missing Worker default.fetch");
 NODE
 
-echo "Validated Sites artifact: ESM Worker default.fetch and hosting manifest are present."
+echo "Validated Worker entry, hosting manifest and packaged migration history."

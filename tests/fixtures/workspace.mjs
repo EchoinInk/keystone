@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
-import worker from "../../dist/server/index.js";
+import { loadWorkerInNode } from "../../scripts/load-worker-in-node.mjs";
+const worker = await loadWorkerInNode();
 
 export const origin = "https://echo-in-ink-founder-os.echoinink.chatgpt.site";
 const migrations = new URL("../../drizzle/", import.meta.url);

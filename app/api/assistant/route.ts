@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getRuntimeEnv } from "../../../db/runtime";
 import { accessResponse } from "../../chatgpt-auth";
-import { ensureDatabase } from "../../../db/bootstrap";
 
 const pageTables:Record<string,string[]>={
   "Mission Control":["tasks","meetings","invoices","payments","leads","clients","projects","sprints","sprint_objectives","activity_logs"],
@@ -47,7 +46,6 @@ export async function POST(request: NextRequest) {
     if (typeof page !== "string" || typeof prompt !== "string") {
       return NextResponse.json({ error: "Invalid assistant request" }, { status: 400 });
     }
-    await ensureDatabase();
     const context = await contextFor(page);
     let response = localAnalysis(page, prompt, context);
     if (env.OPENAI_API_KEY) {
