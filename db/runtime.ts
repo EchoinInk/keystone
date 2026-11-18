@@ -5,7 +5,7 @@ import { AccessError, accessResponse, founderSubject, siteOrigin } from "../app/
 import type { D1Database } from "@cloudflare/workers-types";
 
 interface WorkspaceBucket {
-  put(key: string, body: Blob, options: { httpMetadata: { contentType: string } }): Promise<{ etag: string } | null>;
+  put(key: string, body: Blob, options: { httpMetadata: { contentType: string }; onlyIf?: { etagDoesNotMatch: string } }): Promise<{ etag: string } | null>;
   get(key: string): Promise<{ body: ReadableStream; etag: string } | null>;
 }
 

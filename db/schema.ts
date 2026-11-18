@@ -65,3 +65,11 @@ export const workspaceFiles = sqliteTable("workspace_files", {
   contentType: text("content_type").notNull(),
   size: integer("size").notNull(),
 });
+
+// Dedicated founder binding. The receipt and its command commit in one batch.
+export const commandReceipts = sqliteTable("command_receipts", {
+  requestId: text("request_id").primaryKey(),
+  fingerprint: text("fingerprint").notNull(),
+  result: text("result").notNull(),
+  createdAt: text("created_at").notNull(),
+});

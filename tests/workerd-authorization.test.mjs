@@ -54,13 +54,13 @@ test("local workerd enforces admission and document ownership with D1 and R2 bin
   form.set("file", new File(["verified file"], "proof.txt"));
   const encoded = new Response(form);
   const uploaded = await request("/api/files", {
-    method: "POST", headers: { ...founderHeaders, "content-type": encoded.headers.get("content-type") },
+    method: "POST", headers: { ...founderHeaders, "Idempotency-Key": crypto.randomUUID(), "content-type": encoded.headers.get("content-type") },
     body: await encoded.arrayBuffer(),
   });
   assert.equal(uploaded.status, 200, uploaded.ok ? undefined : await uploaded.text());
   const file = await uploaded.json();
-  const mutate = command => request("/api/data", {
-    method: "POST", headers: { ...founderHeaders, "content-type": "application/json" }, body: JSON.stringify(command),
+  const mutate = (command, key = crypto.randomUUID()) => request("/api/data", {
+    method: "POST", headers: { ...founderHeaders, "Idempotency-Key": key, "content-type": "application/json" }, body: JSON.stringify(command),
   });
   const created = await mutate({ entity: "documents", action: "create", data: file });
   assert.equal(created.status, 200, created.ok ? undefined : await created.text());
@@ -70,4 +70,19 @@ test("local workerd enforces admission and document ownership with D1 and R2 bin
   assert.equal(await (await request(path, { headers: founderHeaders })).text(), "verified file");
   assert.equal((await mutate({ entity: "documents", action: "delete", id })).status, 200);
   assert.equal((await request(path, { headers: founderHeaders })).status, 404);
+
+  const invoice = await mutate({entity:"invoices",data:{number:"D1-1",amount:0.3}});
+  assert.equal(invoice.status, 200);
+  const invoiceId = (await invoice.json()).recordId;
+  const payment = {entity:"payments",data:{invoiceId,amount:0.2,paidAt:"2026-11-19"}};
+  const attempts = await Promise.all([mutate(payment,"pay"),mutate(payment,"pay")]);
+  assert.deepEqual(attempts.map(r => r.status),[200,200]);
+  assert.equal((await attempts[0].json()).metrics.outstanding,0.1);
+  const final = {entity:"payments",data:{...payment.data,amount:0.1}};
+  const competing = await Promise.all([mutate(final),mutate(final)]);
+  assert.deepEqual(competing.map(r=>r.status).sort(),[200,409]);
+  assert.equal(await db.prepare("SELECT COUNT(*) n FROM payments").first("n"),2);
+  const rejected = await mutate({entity:"invoices",action:"delete",id:invoiceId});
+  assert.equal(rejected.status,409);
+  assert.equal(await db.prepare("SELECT COUNT(*) n FROM revisions WHERE entity='invoices' AND action='delete'").first("n"),0);
 });

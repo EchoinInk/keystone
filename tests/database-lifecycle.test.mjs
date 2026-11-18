@@ -24,8 +24,13 @@ test("adopts partial historical DDL, normalizes legacy statuses once and preserv
   await db.prepare("INSERT INTO tasks(id,title,status,created_at,updated_at) VALUES('old','Keep me','Done','before','then')").run();
   const note = "SELECT * FROM notes";
   await db.prepare("INSERT INTO notes(id,title,body,created_at,updated_at) VALUES('n','Original','Exact bytes','a','b')").run();
+  await db.prepare("INSERT INTO invoices(id,number,amount,tax,status,created_at,updated_at) VALUES('historical','H-001',100.01,15,'Paid','a','b')").run();
+  await db.prepare("INSERT INTO payments(id,invoice_id,amount,paid_at,reference,created_at,updated_at) VALUES('receipt','historical',20,'2025-12-31','original','a','b')").run();
+  const ledgerRows = async () => [await rows(db,"SELECT * FROM invoices"), await rows(db,"SELECT * FROM payments")];
+  const ledgerBefore = await ledgerRows();
   const before = await rows(db, note);
   assert.deepEqual(await migrate(db), names);
+  assert.deepEqual(await ledgerRows(), ledgerBefore);
   assert.equal(await normalizeStatuses(db), "normalized");
   assert.deepEqual(await rows(db, note), before);
   assert.deepEqual(await rows(db, "SELECT title,status,completed_at,updated_at FROM tasks"), [
@@ -108,7 +113,7 @@ test("admitted reads, writes and assistant requests never migrate or repair an o
   assert.equal((await call(env, "/api/data", { user, json: { entity: "tasks", action: "create", data: { title: "New task" } } })).status, 200);
   assert.equal((await call(env, "/api/assistant", { user, json: { page: "Tasks", prompt: "How many?" } })).status, 200);
   for (const query of statements) {
-    assert.match(query, /^(SELECT\b|INSERT INTO (tasks|activity_logs|revisions|ai_conversations)\b)/i);
+    assert.match(query, /^(SELECT\b|INSERT INTO (tasks|activity_logs|revisions|ai_conversations|command_receipts)\b)/i);
     assert.doesNotMatch(query, /\b(system_meta|d1_migrations|sqlite_schema|sqlite_master)\b/i);
   }
   assert.equal(sql.prepare("SELECT status FROM tasks WHERE id='legacy'").get().status, "Done");

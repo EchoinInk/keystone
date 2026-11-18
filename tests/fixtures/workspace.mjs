@@ -40,7 +40,8 @@ export function fixture(subject = "owner-one", legacy = () => {}) {
       }
     } },
     BUCKET: {
-      async put(key, blob) {
+      async put(key, blob, options) {
+        if (options?.onlyIf && objects.has(key)) return null;
         counts.writes++;
         const bytes = new Uint8Array(await blob.arrayBuffer());
         const etag = createHash("md5").update(bytes).digest("hex");
@@ -62,6 +63,7 @@ export function call(env, path, { user, method = "GET", json, form, headers = {}
   const h = new Headers(headers);
   if (user) h.set("oai-authenticated-user-id", user);
   if (json || form) method = "POST";
+  if (method === "POST" && !h.has("Idempotency-Key")) h.set("Idempotency-Key", crypto.randomUUID());
   if (method === "POST" && !h.has("origin")) h.set("origin", origin);
   if (json) h.set("content-type", "application/json");
   const request = new Request(new URL(path, host), {

@@ -1,25 +1,18 @@
 import { AccessError, accessResponse } from "../../chatgpt-auth";
 import { getRuntimeEnv } from "../../../db/runtime";
 
+import { runCommand } from "../../../db/commands";
+import { uploadInput, stageFile } from "./upload";
+
 export const dynamic = "force-dynamic";
 
 export async function POST(request: Request) {
   try {
-    const env = getRuntimeEnv();
-    const form = await request.formData();
+    const form = await request.formData().catch(() => { throw new AccessError(400, "Invalid upload"); });
     const file = form.get("file");
-    if (!(file instanceof File)) throw new AccessError(400, "Choose a file");
-
-    // The dedicated database is the authority for object ownership. Neither
-    // user-supplied keys nor an R2 listing can populate its file registry.
-    const objectKey = `workspaces/${env.workspaceId}/${crypto.randomUUID()}`;
-    const contentType = file.type || "application/octet-stream";
-    const object = await env.BUCKET.put(objectKey, file, { httpMetadata: { contentType } });
-    if (!object) throw new Error("Upload unavailable");
-    await env.DB.prepare(
-      "INSERT INTO workspace_files (object_key, etag, name, content_type, size) VALUES (?, ?, ?, ?, ?)",
-    ).bind(objectKey, object.etag, file.name, contentType, file.size).run();
-    return Response.json({ name: file.name, objectKey, contentType, size: file.size });
+    const input = await uploadInput(file);
+    const result = await runCommand(request, input, key => stageFile(key, file as File, input));
+    return Response.json(result);
   } catch (error) {
     return accessResponse(error);
   }

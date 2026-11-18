@@ -21,6 +21,8 @@ Rather than operating as a collection of disconnected dashboards, Founder OS is 
 
 Phase 1 selects the private Sites dispatcher for founder sign-in. The application admits one site-scoped subject to a dedicated D1 database and private R2 bucket. Direct Worker and preview URLs are denied by this revision. Production activation requires confirmation of the Sites project and founder, a paired backup and an approved owner registration. [Phase 1 evidence and cutover](docs/phase-1-workspace-isolation.md)
 
+Application writes use a request key for safe replay. Invoice balances and settlement are calculated from payment records. [Phase 3 command contract, accounting rules and reconciliation procedure](docs/phase-3-command-and-financial-integrity.md)
+
 Founder OS is deployed using Vinext and Cloudflare Workers.
 
 The production runtime uses:

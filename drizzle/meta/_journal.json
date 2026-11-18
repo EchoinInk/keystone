@@ -57,6 +57,13 @@
       "when": 1795020946642,
       "tag": "0007_founder_workspace",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1795033052817,
+      "tag": "0008_command_receipts",
+      "breakpoints": true
     }
   ]
 }
