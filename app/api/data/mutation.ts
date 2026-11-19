@@ -6,6 +6,9 @@ import { cents } from "../../finance";
 import { configs } from "../../record-fields";
 import { entities, mapRow, snake } from "./entities";
 import { invalid, validateFields, validId } from "./validation";
+import { prepareWorkflow, guardRelationships, relatedChanges, taskCompletion } from "./workflow-mutation";
+import { updateRelated } from "./related";
+import { taskStatus } from "../../workflows";
 
 type Row = Record<string, unknown>;
 const history = ["revisions", "activityLogs", "aiConversations"];
@@ -84,6 +87,9 @@ export async function planMutation(body: Row, key: string, attachment?: Row) {
       JSON.stringify(versions), records.length);
   }
   const existing = records[0];
+  const legacyObjectives = entity === "tasks" && ids.length
+    ? (await DB.prepare(`SELECT id FROM launch_objectives WHERE task_id IN (${selectedIds})`).bind(selection).all<Row>()).results
+    : [];
   const timestamp = nextTimestamp(existing?.updatedAt);
   const recordId = creating ? crypto.randomUUID() : String(existing.id);
   function audit(id: string, row: Row, revision: string) {
@@ -120,16 +126,27 @@ export async function planMutation(body: Row, key: string, attachment?: Row) {
       for (const k of ["name", "title"]) if (fields[k]) fields[k] += " copy";
       if (entity === "tasks") Object.assign(fields, { status: "To do", previousStatus: "To do", completedAt: null });
     }
-    if (entity === "leads" && creating && fields.stage === undefined) fields.stage = "New";
-    if (["tasks", "sprintObjectives"].includes(entity)) {
-      if (creating && fields.status === undefined) fields.status = "To do";
-      if (fields.status === "Todo") fields.status = "To do";
-      if (fields.status === "Done") fields.status = "Completed";
+    const previous = creating ? undefined : existing;
+    await prepareWorkflow(entity, fields, previous, action === "duplicate", guard);
+    if (["tasks", "sprintObjectives"].includes(entity) && (typeof fields.status === "string" || (creating && fields.status === undefined))) {
+      fields.status = taskStatus(fields.status);
+    }
+    if (entity === "proposals" && (creating || "leadId" in fields || "clientId" in fields)) {
+      const lead = fields.leadId === undefined ? previous?.leadId : fields.leadId;
+      if (lead && !(fields.clientId === undefined ? previous?.clientId : fields.clientId)) {
+        if (!validId(lead)) invalid("Invalid lead link");
+        const clients = await DB.prepare("SELECT id FROM clients WHERE lead_id=? LIMIT 2").bind(lead).all<Row>();
+        if (clients.results.length > 1) throw new AccessError(409, "Review the clients linked to this lead before adding a proposal.");
+        if (clients.results.length) fields.clientId = clients.results[0].id;
+        else guard("NOT EXISTS(SELECT 1 FROM clients WHERE lead_id=?)", lead);
+      }
     }
     if (entity === "tasks" && action !== "duplicate" && ("previousStatus" in fields || "completedAt" in fields)) invalid("Task completion history is server-managed");
     if (attachment) {
       if ("objectKey" in fields) invalid("Invalid attachment command");
-      Object.assign(fields, attachment);
+      if ("contentType" in fields || "size" in fields) invalid("File metadata is server-managed");
+      const name = fields.name ?? previous?.name ?? attachment.name;
+      Object.assign(fields, attachment, { name });
     } else if (entity === "documents" && (creating || "objectKey" in fields)) {
       if (!validId(fields.objectKey)) invalid("Choose a file");
       const file = await DB.prepare("SELECT name,content_type,size FROM workspace_files WHERE object_key=?").bind(fields.objectKey).first<Row>();
@@ -138,13 +155,16 @@ export async function planMutation(body: Row, key: string, attachment?: Row) {
       fields.contentType = file.content_type;
       fields.size = file.size;
     } else if (entity === "documents" && ("contentType" in fields || "size" in fields)) invalid("File metadata is server-managed");
+    if (entity === "documents" && fields.objectKey) {
+      if (!attachment) {
+        const usable = "NOT EXISTS(SELECT 1 FROM file_transfers WHERE object_key=? AND state<>'live' AND (state<>'staged' OR retry_at<=unixepoch()*1000))";
+        guard(usable, fields.objectKey);
+      }
+      statements.push(DB.prepare("UPDATE file_transfers SET state='live' WHERE object_key=? AND state='staged'").bind(fields.objectKey));
+    }
     if (!Object.keys(fields).length) invalid("Missing record fields");
     validateFields(entity, fields, creating ? undefined : existing);
-    if (entity === "tasks" && fields.status) {
-      fields.completedAt = fields.status === "Completed" ? (existing?.status === "Completed" && existing.completedAt || timestamp) : null;
-      if (fields.status === "Completed") fields.previousStatus = existing?.status === "Completed" ? existing.previousStatus : existing?.status ?? "To do";
-      else if (fields.status !== "Cancelled") fields.previousStatus = fields.status;
-    }
+    if (entity === "tasks") taskCompletion(fields, previous, timestamp);
     const row = { ...(creating ? {} : existing), ...fields };
     for (const column of columns.filter(k => k.endsWith("Id"))) {
       const value = row[column];
@@ -155,6 +175,7 @@ export async function planMutation(body: Row, key: string, attachment?: Row) {
       if (!await DB.prepare(query).bind(value).first()) throw new AccessError(404, "Linked record unavailable");
       guard(`EXISTS(${query})`, value);
     }
+    await guardRelationships(entity, recordId, row, previous, guard);
     guardFinancialRecord(entity, recordId, row, creating ? undefined : existing, guard);
     if (entity === "clients" && row.leadId) guard("NOT EXISTS(SELECT 1 FROM clients WHERE lead_id=? AND id<>?)", row.leadId, recordId);
     if (entity === "revenueGoals") guard("NOT EXISTS(SELECT 1 FROM revenue_goals WHERE period=? AND id<>?)", row.period, recordId);
@@ -167,6 +188,7 @@ export async function planMutation(body: Row, key: string, attachment?: Row) {
       statements.push(DB.prepare(`UPDATE ${table} SET ${keys.map(k => snake(k) + "=?")},updated_at=? WHERE id=?`).bind(...values, timestamp, recordId));
     }
     audit(recordId, creating ? row : existing, creating ? "create" : "update");
+    statements.push(...relatedChanges(entity, { ...row, id: recordId }, previous, fields, timestamp, key));
   }
 
   // Existing workspaces can carry explicit settlement labels. A ledger edit
@@ -185,15 +207,14 @@ export async function planMutation(body: Row, key: string, attachment?: Row) {
   }
 
   if (entity === "tasks") {
-    const objectives = new Set([...records.map(r => r.objectiveId), fields.objectiveId].filter(Boolean));
-    for (const objective of objectives) {
-      const status = `(SELECT CASE WHEN count(*)=0 THEN 'Not started' WHEN min(status='Completed') THEN 'Completed'
-        WHEN max(status='Blocked') THEN 'Blocked' WHEN max(status IN ('In progress','In review','Completed')) THEN 'In progress'
-        ELSE 'Not started' END FROM tasks WHERE objective_id=launch_objectives.id AND status<>'Cancelled')`;
-      statements.push(DB.prepare(`UPDATE launch_objectives SET status=${status},
-        updated_at=CASE WHEN updated_at>=? AND julianday(updated_at) IS NOT NULL
-          THEN strftime('%Y-%m-%dT%H:%M:%fZ',updated_at,'+0.001 seconds') ELSE ? END
-        WHERE id=? AND status<>${status}`).bind(timestamp, timestamp, objective));
+    const objectives = new Set([...records.map(r => r.objectiveId), fields.objectiveId, ...legacyObjectives.map(r => r.id)].filter(Boolean));
+    if (objectives.size) {
+      const status = `(SELECT CASE WHEN count(*)=0 THEN 'Not started' WHEN min(status IN ('Completed','Done')) THEN 'Completed'
+        WHEN max(status='Blocked') THEN 'Blocked' WHEN max(status IN ('In progress','In review','Completed','Done')) THEN 'In progress'
+        ELSE 'Not started' END FROM tasks WHERE (objective_id=launch_objectives.id OR (objective_id IS NULL
+          AND tasks.id=launch_objectives.task_id AND (SELECT count(*) FROM launch_objectives l WHERE l.task_id=tasks.id)=1)) AND status<>'Cancelled')`;
+      statements.push(...updateRelated("launchObjectives", `id IN (${selectedIds}) AND status<>${status}`,
+        [JSON.stringify([...objectives])], `status=${status}`, [], timestamp, key, "Weekly objective updated from its tasks"));
     }
   }
   return { result: { recordId, recordIds: deleting ? records.map(row => row.id) : [recordId] }, statements };

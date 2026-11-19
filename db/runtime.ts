@@ -5,8 +5,11 @@ import { AccessError, accessResponse, founderSubject, siteOrigin } from "../app/
 import type { D1Database } from "@cloudflare/workers-types";
 
 interface WorkspaceBucket {
-  put(key: string, body: Blob, options: { httpMetadata: { contentType: string }; onlyIf?: { etagDoesNotMatch: string } }): Promise<{ etag: string } | null>;
-  get(key: string): Promise<{ body: ReadableStream; etag: string } | null>;
+  put(key: string, body: Blob, options: { httpMetadata: { contentType: string }; sha256: string; onlyIf: { etagDoesNotMatch: string } }): Promise<{ etag: string } | null>;
+  get(key: string): Promise<{ body: ReadableStream; etag: string; checksums?: { sha256?: ArrayBuffer } } | null>;
+  head(key: string): Promise<{ etag: string; checksums?: { sha256?: ArrayBuffer } } | null>;
+  delete(key: string): Promise<void>;
+  list(options: { prefix: string; limit: number; cursor?: string }): Promise<{ objects: { key: string }[]; truncated: boolean; cursor?: string }>;
 }
 
 export interface FounderRuntimeEnv {
@@ -40,6 +43,11 @@ export async function withFounderWorkspace(
     }
     const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify([siteOrigin, subject])));
     const workspaceId = Buffer.from(digest).toString("hex");
+    // A browser can still have a form open when its authenticated workspace changes.
+    const expected = request.headers.get("X-Keystone-Workspace");
+    if (expected !== null && expected !== workspaceId) {
+      throw new AccessError(403, "Workspace changed. Reopen your workspace before saving.");
+    }
     const result = await requestWorkspace.run({
       DB: env.DB, BUCKET: env.BUCKET, OPENAI_API_KEY: env.OPENAI_API_KEY, OPENAI_MODEL: env.OPENAI_MODEL, workspaceId,
     }, handle);

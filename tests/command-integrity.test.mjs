@@ -217,6 +217,7 @@ test("form contracts create each writable collection through the Worker, with re
       else if (f.type === "checkbox") data[f.key] = false;
       else data[f.key] = f.required ? (f.key === "period" ? "2026-11" : "Fixture") : "";
     }
+    if (entity === "sprints") data.endDate = "2026-11-25"; // Seven inclusive days from the fixture start.
     const result = await create(entity,data);
     ids[entity] = result.recordId;
     const snapshot = JSON.parse(rows("revisions").at(-1).snapshot);

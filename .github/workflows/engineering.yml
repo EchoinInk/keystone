@@ -20,5 +20,6 @@ jobs:
       - run: npm run typecheck
       - run: npm run lint
       - run: ./node_modules/.bin/drizzle-kit check
+      - run: ./node_modules/.bin/playwright-core install --with-deps chromium --only-shell
       - run: npm test
       - run: python3 scripts/check-reproducible-build.py

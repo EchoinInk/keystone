@@ -9,7 +9,7 @@ export async function submitCommand(workspace: string, path: string, command: Re
   const storage = `founder-os-command:${workspace}:${intent}`;
   const key = sessionStorage.getItem(storage) ?? crypto.randomUUID();
   sessionStorage.setItem(storage, key);
-  const headers = new Headers({ "Idempotency-Key": key });
+  const headers = new Headers({ "Idempotency-Key": key, "X-Keystone-Workspace": workspace });
   let body: BodyInit = json;
   if (file) {
     const form = new FormData();

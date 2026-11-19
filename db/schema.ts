@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { check, integer, real, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { check, index, integer, real, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
 const audit = {
   createdAt: text("created_at").notNull(),
@@ -21,7 +21,7 @@ export const meetings = sqliteTable("meetings", { id: text("id").primaryKey(), c
 export const calendarEvents = sqliteTable("calendar_events", { id: text("id").primaryKey(), title: text("title").notNull(), startsAt: text("starts_at").notNull(), endsAt: text("ends_at"), type: text("type").notNull().default("Event"), relatedType: text("related_type"), relatedId: text("related_id"), ...audit });
 export const content = sqliteTable("content", { id: text("id").primaryKey(), title: text("title").notNull(), body: text("body").notNull().default(""), status: text("status").notNull().default("Idea"), platform: text("platform").notNull().default("LinkedIn"), publishAt: text("publish_at"), tags: text("tags").notNull().default(""), ...audit });
 export const knowledge = sqliteTable("knowledge", { id: text("id").primaryKey(), title: text("title").notNull(), body: text("body").notNull().default(""), category: text("category").notNull().default("General"), tags: text("tags").notNull().default(""), links: text("links").notNull().default(""), ...audit });
-export const documents = sqliteTable("documents", { id: text("id").primaryKey(), clientId: text("client_id").references(() => clients.id), projectId: text("project_id").references(() => projects.id), name: text("name").notNull(), objectKey: text("object_key").notNull(), contentType: text("content_type").notNull(), size: integer("size").notNull().default(0), ...audit });
+export const documents = sqliteTable("documents", { id: text("id").primaryKey(), clientId: text("client_id").references(() => clients.id), projectId: text("project_id").references(() => projects.id), name: text("name").notNull(), objectKey: text("object_key").notNull(), contentType: text("content_type").notNull(), size: integer("size").notNull().default(0), ...audit }, table => [index("documents_object_key").on(table.objectKey)]);
 export const teamMembers = sqliteTable("team_members", { id: text("id").primaryKey(), name: text("name").notNull(), email: text("email").notNull().default(""), role: text("role").notNull().default("Member"), status: text("status").notNull().default("Active"), ...audit });
 export const aiConversations = sqliteTable("ai_conversations", { id: text("id").primaryKey(), page: text("page").notNull(), prompt: text("prompt").notNull(), response: text("response").notNull(), ...audit });
 export const dailyJournal = sqliteTable("daily_journal", { id: text("id").primaryKey(), date: text("date").notNull(), title: text("title").notNull(), body: text("body").notNull().default(""), mood: text("mood").notNull().default(""), ...audit });
@@ -73,3 +73,13 @@ export const commandReceipts = sqliteTable("command_receipts", {
   result: text("result").notNull(),
   createdAt: text("created_at").notNull(),
 });
+
+// Reservations bridge the R2 put and the D1 registration. Retired keys are
+// never reused. A retained tombstone lets reconciliation detect late uploads.
+export const fileTransfers = sqliteTable("file_transfers", {
+  objectKey: text("object_key").primaryKey(),
+  state: text("state").notNull(),
+  retryAt: integer("retry_at").notNull(),
+  sha256: text("sha256"),
+  etag: text("etag"),
+}, table => [index("file_transfers_due").on(table.state, table.retryAt, table.objectKey)]);

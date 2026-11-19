@@ -64,6 +64,13 @@
       "when": 1795033052817,
       "tag": "0008_command_receipts",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1795037251980,
+      "tag": "0009_file_transfers",
+      "breakpoints": true
     }
   ]
 }

@@ -23,6 +23,10 @@ Phase 1 selects the private Sites dispatcher for founder sign-in. The applicatio
 
 Application writes use a request key for safe replay. Invoice balances and settlement are calculated from payment records. [Phase 3 command contract, accounting rules and reconciliation procedure](docs/phase-3-command-and-financial-integrity.md)
 
+Tasks, sprints and objectives share live progress. Won leads hand off to clients, and private documents support opening, editing, replacement and final-reference deletion. [Phase 4 workflows, file retention and verification](docs/phase-4-core-workflows.md)
+
+The workspace supports phone navigation, keyboard-operated editors and founder-scoped drafts. [Phase 5 interaction behaviour and accessibility verification](docs/phase-5-user-experience-and-accessibility.md)
+
 Founder OS is deployed using Vinext and Cloudflare Workers.
 
 The production runtime uses:
@@ -247,7 +251,7 @@ db/
 └── schema.ts
 
 drizzle/
-├── 0000_*.sql through 0007_*.sql
+├── 0000_*.sql through 0009_*.sql
 └── meta/
 
 worker/
@@ -266,7 +270,7 @@ scripts/
 
 ## Requirements
 
-Use Node.js 22.23.4, npm 10.9.9, Python 3.8+ and Bash on macOS or Linux for the verified toolchain. The local tests use disposable D1 and R2 bindings. Remote administration requires Cloudflare credentials.
+Use Node.js 22.23.4, npm 10.9.9, Python 3.8+ and Bash on macOS or Linux for the verified toolchain. The local tests use disposable D1 and R2 bindings. The browser journeys use the Chromium headless shell installed by `./node_modules/.bin/playwright-core install chromium --only-shell` after the locked dependency install. Remote administration requires Cloudflare credentials.
 
 ```bash
 nvm install
@@ -459,7 +463,7 @@ Do not treat generated output as the long-term source of configuration.
 | `npm run dev` | Start the local Vite development environment |
 | `npm run build` | Run the verified Vinext production build |
 | `npm run start` | Serve the built Worker locally with Wrangler |
-| `npm run test` | Build and run authorization, database lifecycle, local workerd and rendered HTML tests |
+| `npm run test` | Build and run command, authorization, database, document, local workerd and Chromium journey tests |
 | `npm run test:authorization` | Run the authorization suites against the built Worker |
 | `npm run validate:artifact` | Validate the generated Worker artifact |
 | `npm run typecheck` | Run strict TypeScript from scratch |

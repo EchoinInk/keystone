@@ -9,12 +9,16 @@ const migrations = new URL("../../drizzle/", import.meta.url);
 
 export function fixture(subject = "owner-one", legacy = () => {}) {
   const sql = new DatabaseSync(":memory:");
-  const counts = { queries: 0, reads: 0, writes: 0 };
   for (const name of readdirSync(migrations).filter(s => s.endsWith(".sql")).sort()) {
     if (name.startsWith("0007_")) legacy(sql);
     sql.exec(readFileSync(new URL(name, migrations), "utf8"));
   }
   sql.prepare("INSERT INTO workspace_owner VALUES (1, ?, ?)").run(origin, subject);
+  return bindWorkspace(sql, subject);
+}
+
+export function bindWorkspace(sql, subject, objects = new Map()) {
+  const counts = { queries: 0, reads: 0, writes: 0 };
   function prepare(query, values = []) {
     counts.queries++;
     const stmt = sql.prepare(query);
@@ -25,7 +29,6 @@ export function fixture(subject = "owner-one", legacy = () => {}) {
       run: () => stmt.run(...values),
     };
   }
-  const objects = new Map();
   const env = {
     FOUNDER_USER_ID: subject,
     DB: { prepare, batch(statements) {
@@ -45,13 +48,20 @@ export function fixture(subject = "owner-one", legacy = () => {}) {
         counts.writes++;
         const bytes = new Uint8Array(await blob.arrayBuffer());
         const etag = createHash("md5").update(bytes).digest("hex");
-        objects.set(key, { bytes, etag });
+        objects.set(key, { bytes, etag, checksums: { sha256: Uint8Array.from(createHash("sha256").update(bytes).digest()).buffer } });
         return { etag };
+      },
+      async head(key) { return objects.get(key) ?? null; },
+      async delete(key) { objects.delete(key); },
+      async list({ prefix, limit, cursor }) {
+        const keys = [...objects.keys()].filter(k => k.startsWith(prefix) && (!cursor || k > cursor)).sort();
+        const page = keys.slice(0, limit);
+        return { objects: page.map(key => ({ key })), truncated: keys.length > limit, cursor: page.at(-1) };
       },
       async get(key) {
         counts.reads++;
         const object = objects.get(key);
-        return object ? { etag: object.etag, body: new Response(object.bytes).body } : null;
+        return object ? { etag: object.etag, checksums: object.checksums, body: new Response(object.bytes).body } : null;
       },
     },
     ASSETS: { fetch: () => new Response("static fixture") },

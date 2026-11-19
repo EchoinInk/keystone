@@ -55,6 +55,9 @@ export function validateFields(entity: string, fields: Row, previous?: Row) {
     }
   }
   const row = { ...previous, ...fields };
+  if (entity === "documents" && (typeof row.name !== "string" || !row.name.trim())) invalid("Enter a document name");
+  if (entity === "sprintObjectives" && row.dayNumber !== undefined && Number(row.dayNumber) < 1) invalid("Day number must be positive");
+  if (entity === "launchObjectives" && row.weekNumber != null && Number(row.weekNumber) < 1) invalid("Week number must be positive");
   if (entity === "revenueGoals" && !/^\d{4}-(0[1-9]|1[012])$/.test(String(row.period))) invalid("Expected goal month YYYY-MM");
   if (entity === "payments" && (!validId(row.invoiceId) || !validMoney(row.amount) || Number(row.amount) <= 0)) invalid("A receipt requires an invoice and a positive amount");
   if (entity === "invoices" && row.dueDate && row.issueDate && String(row.dueDate) < String(row.issueDate)) invalid("Due date precedes issue date");
