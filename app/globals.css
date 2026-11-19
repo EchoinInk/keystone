@@ -222,3 +222,11 @@ dialog.ai-drawer {
   .sidebar nav.expanded { grid-template-columns: minmax(0, 1fr); }
   .review-strip, .stat-grid { grid-template-columns: minmax(0, 1fr); }
 }
+
+.conversation-result { margin-top: 1rem; overflow-wrap: anywhere; }
+.conversation-result p { margin-block: .7rem; }
+.conversation-result .assistant-answer { white-space: pre-wrap; }
+.conversation-result pre { max-height: 15rem; overflow: auto; padding: .75rem; white-space: pre-wrap; font-size: .875rem; }
+.conversation-decisions { display: grid; gap: .5rem; margin-top: .75rem; }
+.assistant-history { margin-top: 1rem; }
+.assistant-history select { min-width: 0; width: 100%; }

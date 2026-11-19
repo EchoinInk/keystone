@@ -5,7 +5,7 @@ import { Miniflare, convertV4MiniflareOptions } from "miniflare";
 
 export const origin = "https://echo-in-ink-founder-os.echoinink.chatgpt.site";
 
-export function localWorker(t, admittedFounder = "fixture-founder") {
+export function localWorker(t, admittedFounder = "fixture-founder", provider) {
   const root = fileURLToPath(new URL("../../dist/server/", import.meta.url));
   const modules = readdirSync(root, { recursive: true }).filter(name => name.endsWith(".js"));
   const compatibility = { compatibilityDate: "2026-05-15", compatibilityFlags: ["nodejs_compat"] };
@@ -29,7 +29,9 @@ export function localWorker(t, admittedFounder = "fixture-founder") {
         ...compatibility, name: "site", modulesRoot: root,
         modules: modules.sort((a, b) => Number(b === "index.js") - Number(a === "index.js"))
           .map(name => ({ type: "ESModule", path: resolve(root, name), contents: readFileSync(resolve(root, name), "utf8") })),
-        d1Databases: ["DB"], r2Buckets: ["BUCKET"], bindings: { FOUNDER_USER_ID: admittedFounder },
+        d1Databases: ["DB"], r2Buckets: ["BUCKET"], bindings: {
+          FOUNDER_USER_ID: admittedFounder, ...(provider ? {OPENAI_API_KEY:"synthetic-provider"} : {}),
+        },
         serviceBindings: { ASSETS: request => {
           const directory = fileURLToPath(new URL("../../dist/client/", import.meta.url));
           const pathname = new URL(request.url).pathname;
@@ -38,7 +40,8 @@ export function localWorker(t, admittedFounder = "fixture-founder") {
           const types = { ".js": "text/javascript", ".css": "text/css", ".woff2": "font/woff2", ".png": "image/png", ".svg": "image/svg+xml" };
           return new Response(readFileSync(asset), { headers: { "content-type": types[extname(asset)] ?? "application/octet-stream" } });
         } },
-        outboundService: () => new Response(null, { status: 403 }),
+        outboundService: request => provider && request.url === "https://api.openai.com/v1/responses"
+          ? provider(request) : new Response(null, { status: 403 }),
       },
     ],
   }));

@@ -34,32 +34,22 @@ export function requireAtCommit(key: string, predicate: string, ...values: unkno
   ).bind(key, ...values);
 }
 
-export async function runCommand<T>(request: Request, payload: unknown, plan: (key: string, reserveProvider: () => Promise<boolean>) => Promise<CommandPlan<T>>): Promise<T> {
+export async function runCommand<T>(request: Request, payload: unknown, plan: (key: string) => Promise<CommandPlan<T>>): Promise<T> {
   const key = request.headers.get("Idempotency-Key");
   if (!key || !/^[a-zA-Z0-9_-]{1,128}$/.test(key)) throw new AccessError(400, "A valid Idempotency-Key is required");
   const fingerprint = await digest(new TextEncoder().encode(JSON.stringify([new URL(request.url).pathname, canonical(payload)])));
   const { DB } = getRuntimeEnv();
   async function previous() {
-    const receipt = await DB.prepare("SELECT fingerprint,result,created_at FROM command_receipts WHERE request_id=?").bind(key).first<{ fingerprint: string; result: string; created_at: string }>();
+    const receipt = await DB.prepare("SELECT fingerprint,result FROM command_receipts WHERE request_id=?").bind(key).first<{ fingerprint: string; result: string }>();
     if (receipt && receipt.fingerprint !== fingerprint) throw new AccessError(409, "Request key already belongs to a different command");
     return receipt;
   }
   const receipt = await previous();
   if (receipt && receipt.result !== "pending") return JSON.parse(receipt.result) as T;
-  // The external provider has no transactional relationship with D1. Reserve
-  // its single attempt before dispatch. A timed-out attempt finishes locally.
-  async function reserveProvider() {
-    const reserved = await DB.prepare("INSERT INTO command_receipts (request_id,fingerprint,result,created_at) VALUES (?,?,'pending',?) ON CONFLICT(request_id) DO NOTHING RETURNING request_id")
-      .bind(key, fingerprint, new Date().toISOString()).first();
-    if (reserved) return true;
-    const saved = await previous();
-    if (!saved || saved.result !== "pending" || Date.now() - Date.parse(saved.created_at) < 25000) {
-      throw new AccessError(409, "Answer in progress. Retry the same request shortly.");
-    }
-    return false;
-  }
+  // Pre-consent assistant requests could leave a pending receipt. Replaying
+  // their original payload now completes locally under the same key.
   try {
-    const { result, statements } = await plan(key, reserveProvider);
+    const { result, statements } = await plan(key);
     await DB.batch([
       DB.prepare(`INSERT INTO command_receipts (request_id,fingerprint,result,created_at) VALUES (?,?,?,?)
         ON CONFLICT(request_id) DO UPDATE SET result=CASE WHEN command_receipts.fingerprint=excluded.fingerprint

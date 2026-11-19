@@ -27,6 +27,8 @@ Tasks, sprints and objectives share live progress. Won leads hand off to clients
 
 The workspace supports phone navigation, keyboard-operated editors and founder-scoped drafts. [Phase 5 interaction behaviour and accessibility verification](docs/phase-5-user-experience-and-accessibility.md)
 
+The assistant saves local suggestions and asks the founder to review and approve each optional OpenAI request. Saved conversations show the outcome and can be reopened from Activity. [Phase 6 assistant consent, history and verification](docs/phase-6-ai-assistant-reliability.md)
+
 Founder OS is deployed using Vinext and Cloudflare Workers.
 
 The production runtime uses:

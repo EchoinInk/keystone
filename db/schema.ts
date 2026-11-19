@@ -23,7 +23,12 @@ export const content = sqliteTable("content", { id: text("id").primaryKey(), tit
 export const knowledge = sqliteTable("knowledge", { id: text("id").primaryKey(), title: text("title").notNull(), body: text("body").notNull().default(""), category: text("category").notNull().default("General"), tags: text("tags").notNull().default(""), links: text("links").notNull().default(""), ...audit });
 export const documents = sqliteTable("documents", { id: text("id").primaryKey(), clientId: text("client_id").references(() => clients.id), projectId: text("project_id").references(() => projects.id), name: text("name").notNull(), objectKey: text("object_key").notNull(), contentType: text("content_type").notNull(), size: integer("size").notNull().default(0), ...audit }, table => [index("documents_object_key").on(table.objectKey)]);
 export const teamMembers = sqliteTable("team_members", { id: text("id").primaryKey(), name: text("name").notNull(), email: text("email").notNull().default(""), role: text("role").notNull().default("Member"), status: text("status").notNull().default("Active"), ...audit });
-export const aiConversations = sqliteTable("ai_conversations", { id: text("id").primaryKey(), page: text("page").notNull(), prompt: text("prompt").notNull(), response: text("response").notNull(), ...audit });
+export const aiConversations = sqliteTable("ai_conversations", {
+  id: text("id").primaryKey(), page: text("page").notNull(), prompt: text("prompt").notNull(), response: text("response").notNull(),
+  providerStatus: text("provider_status").notNull().default("legacy"),
+  providerIssue: text("provider_issue"), providerContext: text("provider_context"),
+  approvedAt: text("approved_at"), providerStartedAt: text("provider_started_at"), ...audit,
+}, table => [index("ai_conversations_provider_started").on(table.providerStartedAt)]);
 export const dailyJournal = sqliteTable("daily_journal", { id: text("id").primaryKey(), date: text("date").notNull(), title: text("title").notNull(), body: text("body").notNull().default(""), mood: text("mood").notNull().default(""), ...audit });
 export const founderGoals = sqliteTable("founder_goals", { id: text("id").primaryKey(), title: text("title").notNull(), description: text("description").notNull().default(""), targetDate: text("target_date"), status: text("status").notNull().default("Active"), progress: integer("progress").notNull().default(0), ...audit });
 export const kpis = sqliteTable("kpis", { id: text("id").primaryKey(), name: text("name").notNull(), value: real("value").notNull().default(0), target: real("target").notNull().default(0), unit: text("unit").notNull().default("number"), period: text("period").notNull(), ...audit });

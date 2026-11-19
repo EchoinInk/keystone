@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { providerAnswer } from "./fixtures/assistant.mjs";
 import { call, fixture, origin } from "./fixtures/workspace.mjs";
 
 const founder = "pilot-founder";
@@ -27,7 +28,7 @@ test("Worker rejects unauthenticated and unadmitted requests before storage, boo
   const provider = t.mock.method(globalThis, "fetch", () => { throw Error("Unexpected provider call"); });
   for (const [path, method] of [
     ["/", "GET"], ["/assets/app.js", "GET"], ["/_vinext/image", "GET"], ["/api/data", "GET"],
-    ["/api/data", "HEAD"], ["/api/data", "POST"], ["/api/files?key=known", "GET"], ["/api/files?key=known", "HEAD"], ["/api/files", "POST"], ["/api/assistant", "POST"],
+    ["/api/data", "HEAD"], ["/api/data", "POST"], ["/api/files?key=known", "GET"], ["/api/files?key=known", "HEAD"], ["/api/files", "POST"], ["/api/assistant", "POST"], ["/api/assistant?id=known", "GET"],
   ]) {
     for (const [user, status] of [[undefined, 401], [other, 403]]) {
       const response = await call(env, path, { user, method, headers: { "oai-authenticated-user-email": "founder@example.test" } });
@@ -154,18 +155,25 @@ test("assistant uses only the admitted database and writes server-owned, linked 
   const b = fixture(other);
   await snapshot(b.env, other);
   assert.equal((await write(b.env, cmd("tasks", "create", { data: { title: "second-private-task" } }), other)).status, 200);
-  const provider = t.mock.method(globalThis, "fetch", async (_url, options) => {
-    const context = JSON.parse(options.body).input[0].content;
-    assert.ok(context.includes("only-in-one"));
-    assert.ok(!context.includes("second-private-task"));
-    assert.ok(!context.includes("untrusted"));
-    return Response.json({ output_text: "fixture answer" });
-  });
+  const provider = t.mock.method(globalThis, "fetch", () => providerAnswer("fixture answer"));
   env.OPENAI_API_KEY = "test-only";
-  const json = { page: "Tasks", prompt: "what is next?", workspaceId: "other", context: "untrusted" };
+  const json = { page: "Tasks", prompt: "what is next?", mode: "review" };
   assert.equal((await call(env, "/api/assistant", { user: other, json })).status, 403);
-  assert.equal((await call(env, "/api/assistant", { user: founder, json })).status, 200);
+  assert.equal((await call(env, "/api/assistant", { user: founder, json: {...json, workspaceId:"other", context:"untrusted"} })).status, 400);
+  const preview = await (await call(env, "/api/assistant", { user: founder, json })).json();
+  assert.equal(preview.providerStatus, "pending");
+  assert.equal(provider.mock.callCount(), 0);
+  const decision = {action:"approve", conversationId:preview.id};
+  assert.equal((await call(env, "/api/assistant", { user: other, json:decision })).status, 403);
+  assert.equal((await call(b.env, "/api/assistant", { user: other, json:decision })).status, 404);
+  const answer = await (await call(env, "/api/assistant", { user: founder, json:decision })).json();
+  assert.equal(answer.response, "fixture answer");
   assert.equal(provider.mock.callCount(), 1);
+  const context = JSON.parse(provider.mock.calls[0].arguments[1].body).input;
+  assert.equal(context, preview.preview);
+  assert.ok(context.includes("only-in-one"));
+  assert.ok(!context.includes("second-private-task"));
+  assert.ok(!context.includes("untrusted"));
   assert.equal(sql.prepare("SELECT COUNT(*) n FROM activity_logs a JOIN ai_conversations c ON a.record_id=c.id WHERE a.entity='aiConversations'").get().n, 1);
   assert.equal(b.sql.prepare("SELECT COUNT(*) n FROM ai_conversations").get().n, 0);
   for (const entity of ["revisions", "activityLogs", "aiConversations"]) {

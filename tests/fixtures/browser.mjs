@@ -5,10 +5,10 @@ import { localWorker, origin } from "./workerd.mjs";
 
 export const engineName = process.env.KEYSTONE_TEST_BROWSER ?? "chromium";
 
-export async function founderBrowser(t, options) {
+export async function founderBrowser(t, options, provider) {
   const engine = { chromium, firefox, webkit }[engineName];
   if (!engine) throw new Error("Unsupported KEYSTONE_TEST_BROWSER: " + engineName);
-  const mf = localWorker(t);
+  const mf = localWorker(t, "fixture-founder", provider);
   const db = await mf.getD1Database("DB", "site");
   await migrate(db);
   await db.prepare("INSERT INTO workspace_owner VALUES (1,?,?)").bind(origin, "fixture-founder").run();
@@ -16,13 +16,13 @@ export async function founderBrowser(t, options) {
     ? { args: ["--host-resolver-rules=MAP * ~NOTFOUND", "--no-proxy-server"] } : {});
   t.after(() => browser.close());
   const context = await browser.newContext({ ...options, isMobile: engine === firefox ? undefined : options.isMobile, serviceWorkers: "block" });
-  let url = origin, worker = mf, loseNextAcknowledgement = false;
+  let url = origin, worker = mf, loseNextAcknowledgement = null;
   async function dispatch(address, method, headers, bytes) {
     const pathname = new URL(address).pathname;
     const response = await worker.dispatchFetch(address, {method, headers, body:bytes});
     const body = Buffer.from(await response.arrayBuffer());
-    if (loseNextAcknowledgement && method === "POST" && pathname === "/api/data" && response.ok) {
-      loseNextAcknowledgement = false;
+    if (pathname === loseNextAcknowledgement && method === "POST" && response.ok) {
+      loseNextAcknowledgement = null;
       return null;
     }
     const responseHeaders = Object.fromEntries(response.headers);
@@ -63,7 +63,7 @@ export async function founderBrowser(t, options) {
   const page = await context.newPage();
   page.setDefaultTimeout(10000);
   return { mf, db, context, page, url, session, serveFrom(next) { worker = next; },
-    loseAcknowledgement() { loseNextAcknowledgement = true; } };
+    loseAcknowledgement(path = "/api/data") { loseNextAcknowledgement = path; } };
 }
 
 export async function navigateTo(page, name, touch = false) {

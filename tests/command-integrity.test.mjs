@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { providerAnswer } from "./fixtures/assistant.mjs";
 import { call, fixture } from "./fixtures/workspace.mjs";
 import { financialReport } from "../app/finance.ts";
 import { submitCommand } from "../app/submit-command.ts";
@@ -174,27 +175,35 @@ test("lost post-commit snapshot response is recoverable with the original reques
   for (const table of ["notes","activity_logs","revisions","command_receipts"]) assert.equal(rows(table).length,1);
 });
 
-test("provider interruption reserves one attempt, rolls back history and resumes using local advice", async t => {
+test("interrupted assistant writes preserve the local answer and resume without a second provider attempt", async t => {
   const { env, sql, post, rows } = workspace();
-  env.OPENAI_API_KEY="fixture";
-  const provider = t.mock.method(globalThis,"fetch",async()=>Response.json({output_text:"remote attempt"}));
-  const ask=()=>post({page:"Tasks",prompt:"What is next?"},"turn","/api/assistant");
+  env.OPENAI_API_KEY = "fixture";
+  const ask = () => post({page:"Tasks", prompt:"What is next?", mode:"review"}, "turn", "/api/assistant");
   sql.exec("CREATE TRIGGER interrupt BEFORE INSERT ON activity_logs BEGIN SELECT RAISE(ABORT,'stop'); END");
-  assert.equal((await ask()).status,503);
-  assert.deepEqual(rows("ai_conversations"),[]);
-  assert.deepEqual(rows("activity_logs"),[]);
-  assert.equal(rows("command_receipts")[0].result,"pending");
+  assert.equal((await ask()).status, 503);
+  for (const table of ["ai_conversations", "activity_logs", "command_receipts"]) assert.deepEqual(rows(table), []);
   sql.exec("DROP TRIGGER interrupt");
-  assert.equal((await ask()).status,409);
-  assert.equal((await post({entity:"notes",data:{title:"conflict"}},"turn")).status,409);
-  sql.exec("UPDATE command_receipts SET created_at='2000-01-01T00:00:00Z'");
-  const resumed = await ask();
-  assert.equal(resumed.status,200);
-  assert.match((await resumed.json()).response,/open tasks/);
-  assert.equal((await ask()).status,200);
-  assert.equal(provider.mock.callCount(),1);
-  assert.equal(rows("ai_conversations").length,1);
-  assert.equal(rows("activity_logs").length,1);
+  const pending = await (await ask()).json();
+  assert.equal(pending.providerStatus, "pending");
+  const provider = t.mock.method(globalThis, "fetch", () => providerAnswer("remote attempt"));
+  const approve = () => post({action:"approve", conversationId:pending.id}, "approve", "/api/assistant");
+  sql.exec("CREATE TRIGGER interrupt BEFORE UPDATE ON ai_conversations WHEN NEW.provider_status='completed' BEGIN SELECT RAISE(ABORT,'stop'); END");
+  assert.equal((await approve()).status, 503);
+  assert.equal(rows("ai_conversations")[0].provider_status, "running");
+  assert.equal((await (await approve()).json()).providerStatus, "running");
+  assert.equal((await post({entity:"notes",data:{title:"conflict"}}, "approve")).status, 409);
+  sql.exec("DROP TRIGGER interrupt");
+  sql.exec("UPDATE ai_conversations SET provider_started_at='2000-01-01T00:00:00Z'");
+  const get = () => call(env, "/api/assistant?id=" + pending.id, {user:env.FOUNDER_USER_ID});
+  assert.equal((await (await get()).json()).providerIssue, "interrupted");
+  const resumed = await (await approve()).json();
+  assert.equal(resumed.providerStatus, "failed");
+  assert.equal(resumed.providerIssue, "interrupted");
+  assert.match(resumed.response, /open tasks/);
+  assert.deepEqual(await (await approve()).json(), resumed);
+  assert.equal(provider.mock.callCount(), 1);
+  assert.equal(rows("ai_conversations").length, 1);
+  assert.equal(rows("activity_logs").length, 1);
 });
 
 test("form contracts create each writable collection through the Worker, with real parent IDs and database defaults in history", async () => {
@@ -239,17 +248,22 @@ test("browser command helper keeps the same key through an unreadable response a
     const key = options.headers.get("Idempotency-Key");
     keys.push(key);
     const result = await call(env,path,{user:env.FOUNDER_USER_ID,json:JSON.parse(options.body),headers:{"Idempotency-Key":key}});
-    return keys.length === 1 ? new Response("{") : result;
+    if (keys.length === 1) return new Response("{");
+    if (keys.length === 2) return Response.json({});
+    return result;
   });
-  const save = ()=>submitCommand("founder","/api/data",{entity:"notes",data:{title:"same text"}});
+  const save = ()=>submitCommand("founder","/api/data",{entity:"notes",data:{title:"same text"}},undefined,{
+    validateResult: data => assert.equal(typeof data.recordId,"string"),
+  });
+  await assert.rejects(save);
   await assert.rejects(save);
   assert.equal(values.size,1);
   assert.equal((await save()).response.status,200);
-  assert.equal(keys[1],keys[0]);
+  assert.deepEqual(keys,[keys[0],keys[0],keys[0]]);
   assert.equal(values.size,0);
   assert.equal(rows("notes").length,1);
   await save();
-  assert.notEqual(keys[2],keys[1]);
+  assert.notEqual(keys[3],keys[2]);
   assert.equal(rows("notes").length,2);
 });
 

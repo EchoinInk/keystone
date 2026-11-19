@@ -1,7 +1,9 @@
 "use client";
 
 import { configs, TASK_STATUSES, type Field } from "./record-fields";
-import { submitCommand } from "./submit-command";
+import { AssistantPanel, TranscriptDialog } from "./assistant-panel";
+import { providerLabels, type ProviderStatus } from "./assistant-types";
+import { submitCommand, workspaceJson } from "./submit-command";
 import { cents } from "./finance";
 import { activeSprint, reopenStatus, sprintDays, sprintEnd, taskStatus } from "./workflows";
 import type { DataSet, EditorTarget, Row, Save } from "./editor-types";
@@ -42,16 +44,16 @@ const CLOSED_TASK_STATUSES=["Completed","Cancelled"];
 const WorkspaceId = createContext("");
 
 type Snapshot = {
-  workspaceId: string; data: DataSet; metrics: Metrics; reconciliation?: Finding[]; cleanup?: { pending: number };
+  workspaceId: string; assistantProviderAvailable: boolean; data: DataSet; metrics: Metrics; reconciliation?: Finding[]; cleanup?: { pending: number };
 };
 
 export default function Home() {
   const [workspace, setWorkspace] = useState<Snapshot | null>(null);
   const [error, setError] = useState("");
-  const deny = (message: string) => { setWorkspace(null); setError(message); };
+  const deny = useCallback((message: string) => { setWorkspace(null); setError(message); }, []);
   const refresh = useCallback((signal?: AbortSignal) =>
     fetch("/api/data", { cache: "no-store", signal }).then(async response => {
-      const json = await response.json();
+      const json = await workspaceJson(response);
       if (signal?.aborted) return;
       if (!response.ok) {
         if (response.status === 401 || response.status === 403) setWorkspace(null);
@@ -209,7 +211,11 @@ function Workspace({workspace, error, refresh, onDenied, onUpdate}: {
     }}><input id="global-search" value={globalSearch} onChange={e=>setGlobalSearch(e.target.value)} placeholder="Search everything…" aria-label="Global search"/>{globalSearch&&<div className="search-results">{searchResults.length?searchResults.map(({entity,row})=>entity==="tasks"?<div className="search-task-result" key={`${entity}-${row.id}`}><button onClick={()=>openResult(entity,row)}><span>{titleFor(entity)}</span><strong>{rowLabel(row)}</strong></button><TaskStatusControls task={row} save={save} notify={notify} setEditor={setEditor}/></div>:<button key={`${entity}-${row.id}`} onClick={()=>openResult(entity,row)}><span>{titleFor(entity)}</span><strong>{rowLabel(row)}</strong></button>):<p role="status">No matching records</p>}</div>}</div><span className="date-pill" suppressHydrationWarning><i/>{new Intl.DateTimeFormat("en-NZ",{weekday:"short",day:"numeric",month:"short"}).format(new Date()).toUpperCase()}</span><button className={`icon-button ${assistantOpen?"active":""}`} onClick={()=>setAssistantOpen(x=>!x)} aria-label="Open AI command panel" aria-haspopup="dialog" aria-expanded={assistantOpen}>✦</button><button className="primary-button" onClick={()=>setEditor({entity:primaryEntity})}>＋ Add {titleFor(primaryEntity).replace(/s$/,'')}</button></div></header>
       {Boolean(workspace.cleanup?.pending) && <div className="panel" role="status">Private file cleanup is pending. <button disabled={cleaning} onClick={retryCleanup}>Retry storage cleanup</button></div>}
       {error?<div className="content"><section className="panel empty-state"><h2>Founder OS could not load</h2><p>{error}</p><button className="primary-button" onClick={()=>refresh()}>Try again</button></section></div>:<Page key={view} view={view} findings={findings} data={data} metrics={metrics} setView={navigate} setEditor={setEditor} save={save} notify={notify} openAssistant={()=>setAssistantOpen(true)}/>}</main>
-    {editor&&<Editor key={JSON.stringify([editor.entity,editor.row?.id,editor.row?.updatedAt,editor.initial])} {...editor} open={setEditor} data={data} close={()=>setEditor(null)} save={save} notify={notify}/>}<Assistant page={view} open={assistantOpen} close={()=>setAssistantOpen(false)} onSaved={refresh} onDenied={onDenied}/><div role="status" aria-live="polite" aria-atomic="true" className={toast ? "toast" : "sr-only"}>{toast}</div></div>;
+    {editor && (editor.entity === "aiConversations" && editor.row
+      ? <TranscriptDialog key={editor.row.id} id={editor.row.id} workspaceId={workspaceId} close={()=>setEditor(null)} onSaved={refresh} onDenied={onDenied}/>
+      : <Editor key={JSON.stringify([editor.entity,editor.row?.id,editor.row?.updatedAt,editor.initial])} {...editor} open={setEditor} data={data} close={()=>setEditor(null)} save={save} notify={notify}/>)}
+    <AssistantPanel key={view} page={view} open={assistantOpen} close={()=>setAssistantOpen(false)} workspaceId={workspaceId} providerAvailable={workspace.assistantProviderAvailable} history={data.aiConversations} onSaved={refresh} onDenied={onDenied}/>
+    <div role="status" aria-live="polite" aria-atomic="true" className={toast ? "toast" : "sr-only"}>{toast}</div></div>;
 }
 
 function Page({view,data,metrics,findings,setView,setEditor,save,notify,openAssistant}:{view:View;findings:Finding[];data:DataSet;metrics:Metrics;setView:(v:View)=>void;setEditor:(x:EditorTarget)=>void;save:Save;notify:(s:string)=>void;openAssistant:()=>void}){
@@ -280,7 +286,7 @@ function Sprints({data,setEditor,save,notify,openAssistant}:{data:DataSet;setEdi
 }
 
 function Activity({data,setEditor}:{data:DataSet;setEditor:(x:EditorTarget)=>void}){const[filter,setFilter]=useState("All");const categories=Array.from(new Set(["All","Revenue","Clients","Projects","Content","Finance","Knowledge","Tasks","AI",...(data.activityLogs??[]).map(item=>String(item.category))]));const activities=(data.activityLogs??[]).filter(x=>filter==="All"||x.category===filter);return <div className="content section-view"><section className="section-intro"><p className="eyebrow purple">FOUNDER ACTIVITY TIMELINE</p><h2>A live record of how the business moves.</h2><p>Every significant save, update and completion is logged and linked to its originating record.</p></section><div className="activity-filters" role="group" aria-label="Activity categories">{categories.map(category=><button aria-pressed={filter===category} className={filter===category?"active":""} key={category} onClick={()=>setFilter(category)}>{category}</button>)}</div><section className="panel timeline">{activities.map(item=>{const entity=String(item.entity), origin=configs[entity] && data[entity]?.find(x=>x.id===item.recordId);
-    const content = <><span aria-hidden="true" className={`timeline-icon ${String(item.category).toLowerCase()}`}>✦</span><div><strong>{rowLabel(item)}</strong><small>{String(item.category)} · {new Intl.DateTimeFormat("en-NZ",{day:"numeric",month:"short",hour:"numeric",minute:"2-digit"}).format(new Date(String(item.createdAt)))}</small></div><em>{origin?"Open record →":"System event"}</em></>;
+    const content = <><span aria-hidden="true" className={`timeline-icon ${String(item.category).toLowerCase()}`}>✦</span><div><strong>{entity === "aiConversations" && origin ? String(origin.prompt) : rowLabel(item)}</strong><small>{String(item.category)} · {new Intl.DateTimeFormat("en-NZ",{day:"numeric",month:"short",hour:"numeric",minute:"2-digit"}).format(new Date(String(item.createdAt)))}</small></div><em>{origin?"Open record →":"System event"}</em></>;
     return origin ? <button key={item.id} onClick={()=>setEditor({entity,row:origin})}>{content}</button> : <div className="timeline-event" key={item.id}>{content}</div>})}{!activities.length&&<div className="empty-inline"><p>No activity in this filter.</p></div>}</section></div>}
 
 function Knowledge({data,setEditor,save,notify,openAssistant}:{data:DataSet;setEditor:(x:EditorTarget)=>void;save:Save;notify:(s:string)=>void;openAssistant:()=>void}){const[q,setQ]=useState(""),[category,setCategory]=useState("All");const docs=data.knowledge??[],categories=["All",...Array.from(new Set(docs.map(x=>String(x.category||"General"))))];const shown=docs.filter(x=>(category==="All"||(x.category||"General")===category)&&(!q||JSON.stringify(x).toLowerCase().includes(q.toLowerCase())));return <div className="content section-view"><section className="section-intro inline"><div><p className="eyebrow purple">ORGANISATIONAL BRAIN</p><h2>Knowledge that stays connected to the work.</h2><p>Rich notes, Markdown, internal links, tags, attachments, backlinks and revision history live together.</p></div><button className="primary-button" onClick={()=>setEditor({entity:"knowledge"})}>＋ New document</button></section><section className="panel knowledge-tools"><div><input value={q} onChange={e=>setQ(e.target.value)} aria-label="Search knowledge" placeholder="Search titles, content, tags and links…"/><button onClick={openAssistant}>✦ Ask knowledge assistant</button></div><nav aria-label="Knowledge categories">{categories.map(item=><button aria-pressed={category===item} className={category===item?"active":""} key={item} onClick={()=>setCategory(item)}>{item}</button>)}</nav></section><section className="knowledge-grid">{shown.map((doc,index)=>{const backlinks=docs.filter(other=>other.id!==doc.id&&String(other.links??"").includes(doc.id)).length;return <button className="panel knowledge-card" key={doc.id} onClick={()=>setEditor({entity:"knowledge",row:doc})}><span>{String(index+1).padStart(2,"0")}</span><p className="eyebrow">{String(doc.category??"GENERAL")}</p><h3>{rowLabel(doc)}</h3><small>{String(doc.body??"").slice(0,125)||"Empty document — add notes, decisions, code or a table."}</small><b>{String(doc.tags??"Untagged")} · {backlinks} backlink{backlinks===1?"":"s"}</b></button>})}</section><Manager entities={["knowledge","notes","documents","aiConversations"]} data={data} setEditor={setEditor} save={save} notify={notify}/></div>}
@@ -335,7 +341,7 @@ function TaskStatusControls({task,save,notify,setEditor,compact=false,hideComple
   </div>
 }
 
-function Manager({entities,data,setEditor,save,notify}:{entities:string[];data:DataSet;setEditor:(x:EditorTarget)=>void;save:Save;notify:(s:string)=>void}){const available=entities.filter(x=>configs[x]);const[selected,setSelected]=useState(available[0]??"");const entity=available.includes(selected)?selected:(available[0]??"");if(!entity)return null;return <section className="panel data-manager"><div className="manager-tabs" role="group" aria-label="Record collections">{available.map(item=><button aria-pressed={entity===item} className={entity===item?"active":""} key={item} onClick={()=>setSelected(item)}>{titleFor(item)} <span>{data[item]?.length??0}</span></button>)}</div>{entity==="tasks"?<TaskCollection rows={data.tasks??[]} data={data} setEditor={setEditor} save={save} notify={notify}/>:<Collection key={entity} entity={entity} rows={data[entity]??[]} setEditor={setEditor} save={save} notify={notify}/>}</section>}
+function Manager({entities,data,setEditor,save,notify}:{entities:string[];data:DataSet;setEditor:(x:EditorTarget)=>void;save:Save;notify:(s:string)=>void}){const available=entities.filter(x=>configs[x]);const[selected,setSelected]=useState(available[0]??"");const entity=available.includes(selected)?selected:(available[0]??"");if(!entity)return null;return <section className="panel data-manager"><div className="manager-tabs" role="group" aria-label="Record collections">{available.map(item=><button aria-pressed={entity===item} className={entity===item?"active":""} key={item} onClick={()=>setSelected(item)}>{titleFor(item)} <span>{data[item]?.length??0}</span></button>)}</div>{entity==="tasks"?<TaskCollection rows={data.tasks??[]} data={data} setEditor={setEditor} save={save} notify={notify}/>:<Collection key={entity} entity={entity} rows={entity === "aiConversations" ? data[entity].map(row => ({...row, status: providerLabels[row.providerStatus as ProviderStatus]})) : data[entity]??[]} setEditor={setEditor} save={save} notify={notify}/>}</section>}
 
 function TaskCollection({rows,data,setEditor,save,notify}:{rows:Row[];data:DataSet;setEditor:(x:EditorTarget)=>void;save:Save;notify:(s:string)=>void}){
   const[q,setQ]=useState(""),[status,setStatus]=useState("All"),[objective,setObjective]=useState("All"),[sprint,setSprint]=useState("All"),[project,setProject]=useState("All"),[client,setClient]=useState("All"),[week,setWeek]=useState("All"),[sort,setSort]=useState("priority"),[showCompleted,setShowCompleted]=useState(true);
@@ -483,12 +489,6 @@ function Editor({entity,row,initial,open,data,close,save,notify}:EditorTarget & 
   const latest = row && data[entity]?.find(item => item.id === row.id);
   const identifyingField = fields.find(field => field.required && ["name", "title", "number"].includes(field.key));
   const revisions=(data.revisions??[]).filter(x=>x.entity===entity&&x.recordId===row?.id).slice(0,4),invoiceTotal=entity==="invoices"?(cents(values.amount)+cents(values.tax))/100:null;
-  if (entity === "aiConversations" && row) {
-    return <WorkspaceDialog titleId="conversation-title" className="modal editor-modal" onDismiss={close}>
-      <button className="modal-close" aria-label="Close" onClick={close}>×</button>
-      <h2 data-dialog-start tabIndex={-1} id="conversation-title">AI conversation</h2><p>{String(row.prompt)}</p><p>{String(row.response)}</p>
-    </WorkspaceDialog>;
-  }
   function reopenLatest() {
     if (!latest || !canLeave()) return;
     draft.acceptVersion(String(latest.updatedAt));
@@ -526,32 +526,5 @@ function Editor({entity,row,initial,open,data,close,save,notify}:EditorTarget & 
       try { await save(entity,"delete",{id:row.id,expectedUpdatedAt:row.updatedAt}); draft.clear(); notify("Record deleted"); close(); }
       catch (e) { setError(friendlyError(e,"Unable to delete")); } finally { setBusy(false); }
     }}>Delete record</button>}
-  </WorkspaceDialog>;
-}
-
-function Assistant({page,open,close,onSaved,onDenied}:{page:View;open:boolean;close:()=>void;onSaved:()=>void;onDenied:(message:string)=>void}){const[prompt,setPrompt]=useState(""),[answer,setAnswer]=useState(""),[busy,setBusy]=useState(false);const suggestions=page==="Revenue"?["Forecast next month’s income","Which invoices need follow-up?"]:page==="Clients"?["Which clients need attention?","Summarise the most active client"]:page==="Projects"?["Show current project risks","Suggest the next milestone"]:page==="Knowledge Base"?["Summarise all branding decisions","Find everything related to AquaFit"]:page==="Sprints"?["What could block this sprint?","What should I do next?"]:["What should I focus on today?","Show current risks and opportunities"];
-  const workspaceId=useContext(WorkspaceId);
-  const [error, setError] = useState("");
-  async function ask(e:FormEvent) {
-    e.preventDefault();
-    if (busy || !prompt.trim()) return;
-    setBusy(true); setError("");
-    try {
-      const {response, data:json} = await submitCommand(workspaceId,"/api/assistant",{page,prompt});
-      if (!response.ok) {
-        if (response.status === 401 || response.status === 403) onDenied(json.error || "Workspace access denied");
-        throw new Error(json.error || "Unable to load answer");
-      }
-      setAnswer(json.response); onSaved();
-    } catch (e) { setError(friendlyError(e,"Unable to load answer")); } finally { setBusy(false); }
-  }
-  return <WorkspaceDialog open={open} titleId="assistant-title" className="ai-drawer" onDismiss={close}>
-    <header><div><p className="eyebrow purple">CONTEXT · {page.toUpperCase()}</p><h2 id="assistant-title" data-dialog-start tabIndex={-1}>AI Command Panel</h2></div><button aria-label="Close" onClick={close}>×</button></header>
-    <p className="ai-context">Answers use the records and relationships available on this page. Missing information is stated clearly.</p>
-    <div className="prompt-chips">{suggestions.map(item=><button key={item} onClick={()=>setPrompt(item)}>{item}</button>)}</div>
-    <form onSubmit={ask}><label>Ask Founder OS<textarea value={prompt} onChange={e=>setPrompt(e.target.value)} placeholder="Ask about the work, risks, revenue or next action…" required rows={5}/></label>
-      <button className="primary-button" disabled={busy || !prompt.trim()}>{busy?"Analysing stored data…":"Run command ✦"}</button></form>
-    <div role="status" aria-live="polite">{busy ? "Analysing stored data…" : answer && <div className="assistant-answer">{answer}</div>}</div>
-    {error && <p role="alert" className="form-error">{error}</p>}
   </WorkspaceDialog>;
 }

@@ -8,6 +8,7 @@ import { isRecord, jsonObject, runCommand } from "../../../db/commands";
 import { projectWorkflows } from "../../workflows";
 import { convertLead } from "./handoff";
 import { planMutation } from "./mutation";
+import { transcriptColumns } from "../assistant/history";
 
 import { cleanFiles, pendingFileCleanup } from "../files/cleanup";
 import { uploadForm, uploadInput, fileFields, stageFile } from "../files/upload";
@@ -17,9 +18,11 @@ export const dynamic = "force-dynamic";
 async function loadAll(){
   const env=getRuntimeEnv();
   const keys=Object.keys(entities);
-  const results = await env.DB.batch(keys.map(key => env.DB.prepare(key === "documents"
-    ? `SELECT d.*, f.name AS attachment_name FROM documents d LEFT JOIN workspace_files f ON f.object_key=d.object_key ORDER BY d.updated_at DESC,d.id`
-    : `SELECT * FROM ${entities[key].table} ORDER BY updated_at DESC,id`)));
+  const results = await env.DB.batch(keys.map(key => {
+    if (key === "documents") return env.DB.prepare(`SELECT d.*, f.name AS attachment_name FROM documents d LEFT JOIN workspace_files f ON f.object_key=d.object_key ORDER BY d.updated_at DESC,d.id`);
+    if (key === "aiConversations") return env.DB.prepare(`SELECT ${transcriptColumns} FROM ai_conversations ORDER BY created_at DESC,id`);
+    return env.DB.prepare(`SELECT * FROM ${entities[key].table} ORDER BY updated_at DESC,id`);
+  }));
   const data=Object.fromEntries(keys.map((key,index)=>[key,(results[index].results??[]).map(row=>mapRow(row as Record<string,unknown>))]));
   return projectWorkflows(data);
 }
@@ -40,7 +43,8 @@ function snapshot(data: Record<string, Array<Record<string, unknown>>>) {
 
 export async function GET() {
   try {
-    return NextResponse.json({ workspaceId: getRuntimeEnv().workspaceId, ...snapshot(await loadAll()),
+    const { workspaceId, OPENAI_API_KEY } = getRuntimeEnv();
+    return NextResponse.json({ workspaceId, assistantProviderAvailable: Boolean(OPENAI_API_KEY), ...snapshot(await loadAll()),
       cleanup: { pending: await pendingFileCleanup() } });
   } catch (error) { return accessResponse(error); }
 }
